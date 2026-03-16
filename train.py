@@ -255,7 +255,10 @@ def train(args):
     envs = DummyVecEnv([make_env(seed_offset=i, league=args.league)
                         for i in range(n_envs)])
 
-    if warmup_path and warmup_path.exists():
+    if args.resume:
+        model = PPO.load(args.resume, env=envs, device=device)
+        print(f"Resumed from {args.resume}")
+    elif warmup_path and warmup_path.exists():
         model = PPO.load(str(warmup_path), env=envs, device=device)
         print(f"Loaded warmup model from {warmup_path}")
     else:
@@ -269,7 +272,7 @@ def train(args):
         SelfPlayCallback(
             eval_freq=args.eval_freq,
             n_eval_games=args.n_eval_games,
-            update_threshold=0.60,
+            update_threshold=0.80,
             patience_threshold=0.55,
             patience_evals=3,
             checkpoint_dir=str(CHECKPOINT_DIR),
