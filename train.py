@@ -257,6 +257,7 @@ def train(args):
 
     if args.resume:
         model = PPO.load(args.resume, env=envs, device=device)
+        model.tensorboard_log = str(LOG_DIR)  # Fix path for new machine
         print(f"Resumed from {args.resume}")
     elif warmup_path and warmup_path.exists():
         model = PPO.load(str(warmup_path), env=envs, device=device)
