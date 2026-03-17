@@ -22,7 +22,7 @@ import torch
 # Ensure imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -139,7 +139,7 @@ class SelfPlayCallback(BaseCallback):
         """Update the opponent policy in training environments."""
         # Load the latest checkpoint as the opponent
         ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
-        opponent_model = PPO.load(str(ckpt_path))
+        opponent_model = MaskablePPO.load(str(ckpt_path))
 
         def make_opponent(obs):
             action, _ = opponent_model.predict(obs, deterministic=False)
@@ -187,7 +187,14 @@ def make_env(seed_offset=0, league=4, max_turns=200, opponent=None):
 
 def create_model(env, device="auto"):
     """Create PPO model with CompactUNetExtractor."""
-    model = PPO(
+    # Dynamic batch size: divide total buffer into 4 chunks
+    n_steps = 1024
+    total_states = n_steps * env.num_envs
+    dynamic_batch_size = total_states // 4  # 4 chunks
+
+    print(f"Total buffer: {total_states} states. Batch size (1/4 chunk): {dynamic_batch_size}")
+
+    model = MaskablePPO(
         "CnnPolicy",
         env,
         policy_kwargs={
@@ -197,9 +204,9 @@ def create_model(env, device="auto"):
             "activation_fn": torch.nn.Tanh,
         },
         learning_rate=3e-4,
-        n_steps=1024,
-        batch_size=128,
-        n_epochs=10,
+        n_steps=n_steps,
+        batch_size=dynamic_batch_size,
+        n_epochs=4,  # pairs with 4 chunks
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
@@ -256,11 +263,11 @@ def train(args):
                         for i in range(n_envs)])
 
     if args.resume:
-        model = PPO.load(args.resume, env=envs, device=device)
+        model = MaskablePPO.load(args.resume, env=envs, device=device)
         model.tensorboard_log = str(LOG_DIR)  # Fix path for new machine
         print(f"Resumed from {args.resume}")
     elif warmup_path and warmup_path.exists():
-        model = PPO.load(str(warmup_path), env=envs, device=device)
+        model = MaskablePPO.load(str(warmup_path), env=envs, device=device)
         print(f"Loaded warmup model from {warmup_path}")
     else:
         model = create_model(envs, device=device)
