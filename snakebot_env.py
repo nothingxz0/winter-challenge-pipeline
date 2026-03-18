@@ -136,6 +136,7 @@ class SnakeBotEnv(gymnasium.Env):
         self.max_turns = max_turns
         self.opponent = opponent  # callable: obs → action array, or None (random)
         self.render_mode = render_mode
+        self.stall_counts = {} # Track consecutive turns at same (x, y)
 
         # Fixed 64×64 padded observation
         self.observation_space = spaces.Box(
@@ -155,6 +156,7 @@ class SnakeBotEnv(gymnasium.Env):
         self.lib.engine_reset(self.handle, game_seed, self.league)
         self.lib.engine_set_max_turns(self.handle, self.max_turns)
         self._cache_bird_ids()
+        self.stall_counts = {} # Clear counts for the new game
         obs = self._get_obs(viewer=0)
         return obs, {}
 
@@ -240,10 +242,14 @@ class SnakeBotEnv(gymnasium.Env):
     #     return obs, total_reward, terminated, truncated, {}
     
     def step(self, action):
-        # Build my actions
+        # 1. Capture head positions and score BEFORE the move
+        my_old_score = self.lib.engine_body_score(self.handle, 0)
+        prev_positions = self._get_head_positions(player=0)
+        
+        # 2. Build my actions
         my_actions = self._build_actions(action, player=0)
 
-        # Opponent actions (KEEPING THE MASK FIX!)
+        # 3. Handle Opponent actions (with Masking Fix)
         if self.opponent is not None:
             opp_obs = self._get_obs(viewer=1)
             opp_masks = self.action_masks(player=1) 
@@ -252,20 +258,81 @@ class SnakeBotEnv(gymnasium.Env):
         else:
             opp_actions = self._random_actions(player=1)
 
-        # Merge all actions and step the C++ engine
+        # 4. Step the C++ engine
         all_acts = my_actions + opp_actions
-        n = len(all_acts) // 2
+        n_birds_total = len(all_acts) // 2
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
-        terminal = self.lib.engine_step(self.handle, arr, n)
+        terminal = self.lib.engine_step(self.handle, arr, n_birds_total)
 
-        # Pure terminal reward calculation
-        obs = self._get_obs(viewer=0)
-        reward = self._compute_reward(bool(terminal))
+        # 5. Capture head positions and score AFTER the move
+        my_new_score = self.lib.engine_body_score(self.handle, 0)
+        curr_positions = self._get_head_positions(player=0)
+
+        # 6. Calculate Shaped Rewards
         
+        # A. Apple Reward (+0.2)
+        apples_eaten = max(0, my_new_score - my_old_score)
+        apple_reward = apples_eaten * 0.2
+
+        # B. Stateful Stall Penalty (The Claude Fix)
+        stall_penalty = 0.0
+        for bid, prev_pos in prev_positions.items():
+            if bid in curr_positions:
+                if prev_pos == curr_positions[bid]:
+                    # Bird did not move (stuck against wall/ceiling)
+                    self.stall_counts[bid] = self.stall_counts.get(bid, 0) + 1
+                    
+                    # Start punishing after 3 consecutive turns of being stuck
+                    if self.stall_counts[bid] >= 3:
+                        # Escalating penalty: -0.1, -0.2, -0.3...
+                        stall_penalty -= 0.1 * (self.stall_counts[bid] - 2)
+                else:
+                    # Successfully moved, reset counter for this bird
+                    self.stall_counts[bid] = 0
+            else:
+                # Bird died this turn, remove from tracking
+                self.stall_counts.pop(bid, None)
+
+        # 7. Final Reward Calculation
+        obs = self._get_obs(viewer=0)
+        terminal_reward = self._compute_reward(bool(terminal))
+        
+        # Combine everything: terminal (+1/-1) + apples (+0.2) + stall penalty
+        total_reward = terminal_reward + apple_reward + stall_penalty
+
         terminated = bool(terminal)
         truncated = False
 
-        return obs, reward, terminated, truncated, {}
+        return obs, total_reward, terminated, truncated, {}
+
+
+    # def step(self, action):
+    #     # Build my actions
+    #     my_actions = self._build_actions(action, player=0)
+
+    #     # Opponent actions (KEEPING THE MASK FIX!)
+    #     if self.opponent is not None:
+    #         opp_obs = self._get_obs(viewer=1)
+    #         opp_masks = self.action_masks(player=1) 
+    #         opp_act = self.opponent(opp_obs, opp_masks) 
+    #         opp_actions = self._build_actions(opp_act, player=1)
+    #     else:
+    #         opp_actions = self._random_actions(player=1)
+
+    #     # Merge all actions and step the C++ engine
+    #     all_acts = my_actions + opp_actions
+    #     n = len(all_acts) // 2
+    #     arr = (ctypes.c_int * len(all_acts))(*all_acts)
+    #     terminal = self.lib.engine_step(self.handle, arr, n)
+
+    #     # Pure terminal reward calculation
+    #     obs = self._get_obs(viewer=0)
+    #     reward = self._compute_reward(bool(terminal))
+        
+    #     terminated = bool(terminal)
+    #     truncated = False
+
+    #     return obs, reward, terminated, truncated, {}
 
     # def step(self, action):
     #     # Build my actions
