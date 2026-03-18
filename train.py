@@ -228,8 +228,8 @@ def train(args):
         print("Phase 1: Warmup vs random opponent")
         print("=" * 60)
 
-        envs = DummyVecEnv([make_env(seed_offset=i, league=args.league)
-                            for i in range(n_envs)])
+        envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
+                              for i in range(n_envs)])
         model = create_model(envs, device=device)
 
         model.learn(
@@ -252,8 +252,8 @@ def train(args):
 
     remaining_steps = args.total_steps - args.warmup_steps
 
-    envs = DummyVecEnv([make_env(seed_offset=i, league=args.league)
-                        for i in range(n_envs)])
+    envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
+                          for i in range(n_envs)])
 
     if args.resume:
         model = PPO.load(args.resume, env=envs, device=device)
