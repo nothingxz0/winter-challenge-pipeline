@@ -142,22 +142,13 @@ class SelfPlayCallback(BaseCallback):
         """Update the opponent policy in training environments."""
         # Load the latest checkpoint as the opponent
         ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
-
-        # SubprocVecEnv doesn't allow direct env modification
-        # Just log the update - training uses random opponent anyway
-        # The evaluation still tests against the saved opponent checkpoint
-        if not hasattr(self.training_env, 'envs'):
-            if self.verbose:
-                print(f"[SelfPlay] Opponent v{self.opponent_version} saved (eval uses this checkpoint)")
-            return
-
         opponent_model = PPO.load(str(ckpt_path))
 
         def make_opponent(obs):
             action, _ = opponent_model.predict(obs, deterministic=False)
             return action
 
-        # Update opponent in all vectorized environments (DummyVecEnv only)
+        # Update opponent in all vectorized environments
         for env_idx in range(self.training_env.num_envs):
             env = self.training_env.envs[env_idx]
             # Navigate through Monitor wrapper if present
@@ -199,13 +190,6 @@ def make_env(seed_offset=0, league=4, max_turns=200, opponent=None):
 
 def create_model(env, device="auto"):
     """Create PPO model with CompactUNetExtractor."""
-    # Dynamic batch size: divide total buffer into 4 chunks
-    n_steps = 2048
-    total_states = n_steps * env.num_envs
-    dynamic_batch_size = total_states // 4  # 4 chunks
-
-    print(f"Total buffer: {total_states} states. Batch size (1/4 chunk): {dynamic_batch_size}")
-
     model = PPO(
         "CnnPolicy",
         env,
@@ -216,13 +200,13 @@ def create_model(env, device="auto"):
             "activation_fn": torch.nn.Tanh,
         },
         learning_rate=3e-4,
-        n_steps=n_steps,
-        batch_size=dynamic_batch_size,
-        n_epochs=4,  # pairs with 4 chunks
+        n_steps=1024,
+        batch_size=128,
+        n_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.05,  # keeping high ent_coef per your friend's advice
+        ent_coef=0.05,
         vf_coef=0.5,
         max_grad_norm=0.5,
         device=device,
@@ -271,8 +255,8 @@ def train(args):
 
     remaining_steps = args.total_steps - args.warmup_steps
 
-    envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
-                          for i in range(n_envs)])
+    envs = DummyVecEnv([make_env(seed_offset=i, league=args.league)
+                        for i in range(n_envs)])
 
     if args.resume:
         model = PPO.load(args.resume, env=envs, device=device)
