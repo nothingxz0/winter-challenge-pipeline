@@ -1,7 +1,3 @@
 checkpoints/
 logs/
 __pycache__/
-backup_checkpoints/
-exported_weights_int8.npz
-*:Zone.Identifier
-simple_cnn_policy.py
