@@ -242,9 +242,10 @@ class SnakeBotEnv(gymnasium.Env):
     #     return obs, total_reward, terminated, truncated, {}
     
     def step(self, action):
-        # 1. Capture head positions and score BEFORE the move
+        # 1. Capture State BEFORE the move
         my_old_score = self.lib.engine_body_score(self.handle, 0)
         prev_positions = self._get_head_positions(player=0)
+        H = self.lib.engine_get_height(self.handle)
         
         # 2. Build my actions
         my_actions = self._build_actions(action, player=0)
@@ -264,41 +265,53 @@ class SnakeBotEnv(gymnasium.Env):
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n_birds_total)
 
-        # 5. Capture head positions and score AFTER the move
+        # 5. Capture State AFTER the move
         my_new_score = self.lib.engine_body_score(self.handle, 0)
+        opp_score = self.lib.engine_body_score(self.handle, 1)
         curr_positions = self._get_head_positions(player=0)
 
-        # 6. Calculate Shaped Rewards
+        # 6. CALCULATE SHAPED REWARDS (Mid-game signals)
         
-        # A. Apple Reward (+0.2)
+        # A. Apple Reward (+0.15)
         apples_eaten = max(0, my_new_score - my_old_score)
-        apple_reward = apples_eaten * 0.2
+        apple_reward = apples_eaten * 0.15
 
-        # B. Stateful Stall Penalty (The Claude Fix)
+        # B. Stateful Stall Penalty (Anti-UP spam)
         stall_penalty = 0.0
         for bid, prev_pos in prev_positions.items():
             if bid in curr_positions:
                 if prev_pos == curr_positions[bid]:
-                    # Bird did not move (stuck against wall/ceiling)
                     self.stall_counts[bid] = self.stall_counts.get(bid, 0) + 1
-                    
-                    # Start punishing after 3 consecutive turns of being stuck
                     if self.stall_counts[bid] >= 3:
-                        # Escalating penalty: -0.1, -0.2, -0.3...
                         stall_penalty -= 0.1 * (self.stall_counts[bid] - 2)
                 else:
-                    # Successfully moved, reset counter for this bird
                     self.stall_counts[bid] = 0
             else:
-                # Bird died this turn, remove from tracking
                 self.stall_counts.pop(bid, None)
 
-        # 7. Final Reward Calculation
+        # C. Height Safety Reward (+0.04 max)
+        # Encourages staying elevated to avoid gravity deaths
+        if curr_positions:
+            avg_y = sum(pos[1] for pos in curr_positions.values()) / len(curr_positions)
+            height_reward = 0.04 * (1.0 - avg_y / (H - 1))
+        else:
+            height_reward = 0.0
+
+        # D. Score Lead Reward (+0.02 max)
+        # Encourages keeping a lead over the opponent
+        lead_reward = 0.02 * (my_new_score - opp_score) / max(my_new_score + opp_score, 1)
+
+        # 7. APPLY HARD CAP TO SHAPED REWARDS
+        # This prevents shaped rewards from ever outweighing the win/loss (+1/-1)
+        shaped_step_total = apple_reward + stall_penalty + height_reward + lead_reward
+        clamped_shaped_reward = max(-0.3, min(0.3, shaped_step_total))
+
+        # 8. Final Reward Calculation
         obs = self._get_obs(viewer=0)
         terminal_reward = self._compute_reward(bool(terminal))
         
-        # Combine everything: terminal (+1/-1) + apples (+0.2) + stall penalty
-        total_reward = terminal_reward + apple_reward + stall_penalty
+        # Final = Terminal (High priority) + Clamped Shapes (Low priority)
+        total_reward = terminal_reward + clamped_shaped_reward
 
         terminated = bool(terminal)
         truncated = False
