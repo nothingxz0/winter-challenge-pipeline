@@ -19,9 +19,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 # Ensure imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
@@ -213,7 +214,7 @@ def create_model(env, device="auto"):
             "net_arch": {"pi": [128, 128], "vf": [128, 128]},  # vf small since we don't export it
             "activation_fn": torch.nn.ReLU,
         },
-        learning_rate=3e-4,
+        learning_rate=1e-4,
         n_steps=n_steps,
         batch_size=dynamic_batch_size,
         n_epochs=4,  # pairs with 4 chunks
@@ -245,8 +246,8 @@ def train(args):
         print("Phase 1: Warmup vs random opponent")
         print("=" * 60)
 
-        envs = DummyVecEnv([make_env(seed_offset=i, league=args.league)
-                            for i in range(n_envs)])
+        envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
+                    for i in range(n_envs)])
         model = create_model(envs, device=device)
 
         model.learn(
