@@ -67,7 +67,7 @@ class SelfPlayCallback(BaseCallback):
         self.eval_results = []
 
     def _on_step(self):
-        if self.num_timesteps % self.eval_freq != 0:
+        if self.num_timesteps == 0 or self.num_timesteps % self.eval_freq != 0:
             return True
 
         win_rate = self._evaluate()
