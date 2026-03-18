@@ -136,7 +136,7 @@ class SelfPlayCallback(BaseCallback):
         opponent_model = MaskablePPO.load(str(ckpt_path))
 
         def make_opponent(obs):
-            action, _ = opponent_model.predict(obs, deterministic=False)
+            action, _ = opponent_model.predict(obs, deterministic=True)
             return action
 
         # Update opponent in all vectorized environments
