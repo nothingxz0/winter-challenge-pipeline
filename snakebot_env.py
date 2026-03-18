@@ -230,9 +230,9 @@ class SnakeBotEnv(gymnasium.Env):
 
     def _build_actions(self, action, player=0):
         """Convert MultiDiscrete action [d0, d1, d2, d3] to flat action list."""
-        bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
+        alive_birds = self.get_alive_bird_ids(player=player)
         acts = []
-        for i, bid in enumerate(bird_ids):
+        for i, bid in enumerate(alive_birds):
             if i < len(action):
                 d = int(action[i]) % 4
             else:
@@ -242,9 +242,9 @@ class SnakeBotEnv(gymnasium.Env):
 
     def _random_actions(self, player=1):
         """Random actions for a player's birds."""
-        bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
+        alive_birds = self.get_alive_bird_ids(player=player)
         acts = []
-        for bid in bird_ids:
+        for bid in alive_birds:
             acts.extend([bid, random.randint(0, 3)])
         return acts
 
@@ -284,3 +284,43 @@ class SnakeBotEnv(gymnasium.Env):
             if bid.value in bird_ids and a.value:
                 alive.append(bid.value)
         return alive
+
+    def action_masks(self):
+        """
+        Returns a flat boolean array of valid actions for the MultiDiscrete space.
+        Shape: (16,) -> 4 directions for 4 possible birds.
+        True = Safe, False = Wall/Death.
+        """
+        # Start with all moves being False (unsafe)
+        mask = np.zeros(16, dtype=bool)
+
+        # Buffer to hold returned legal commands (max 5: KEEP + 4 directions)
+        legal_arr = (ctypes.c_int * 5)()
+
+        alive_birds = self.get_alive_bird_ids(player=0)
+
+        for i, bid in enumerate(self._my_bird_ids):
+            if i < 4:  # Max 4 birds
+                start_idx = i * 4
+
+                # Dead birds: allow all moves (doesn't matter, bird is dead)
+                if bid not in alive_birds:
+                    mask[start_idx:start_idx + 4] = True
+                    continue
+
+                # Get legal commands for this bird
+                # Returns count and fills legal_arr with command IDs (0-4)
+                count = self.lib.engine_legal_moves(self.handle, bid, legal_arr)
+
+                # For each legal command, mark that direction as valid
+                # Commands: 0=N, 1=E, 2=S, 3=W, 4=KEEP (we ignore KEEP for action space)
+                for j in range(count):
+                    cmd = legal_arr[j]
+                    if 0 <= cmd <= 3:  # Only directions, not KEEP
+                        mask[start_idx + cmd] = True
+
+                # If no directions are legal (only KEEP), allow all to avoid crash
+                if not any(mask[start_idx:start_idx + 4]):
+                    mask[start_idx:start_idx + 4] = True
+
+        return mask

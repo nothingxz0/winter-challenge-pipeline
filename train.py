@@ -22,7 +22,8 @@ import torch
 # Ensure imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -139,7 +140,7 @@ class SelfPlayCallback(BaseCallback):
         """Update the opponent policy in training environments."""
         # Load the latest checkpoint as the opponent
         ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
-        opponent_model = PPO.load(str(ckpt_path))
+        opponent_model = MaskablePPO.load(str(ckpt_path))
 
         def make_opponent(obs):
             action, _ = opponent_model.predict(obs, deterministic=False)
@@ -176,34 +177,49 @@ class PeriodicCheckpoint(BaseCallback):
         return True
 
 
+def mask_fn(env):
+    """Get action masks from the environment (unwrap if needed)."""
+    while hasattr(env, 'env'):
+        env = env.env
+    return env.action_masks()
+
+
 def make_env(seed_offset=0, league=4, max_turns=200, opponent=None):
-    """Create a monitored environment."""
+    """Create a monitored environment with action masking."""
     def _init():
         env = SnakeBotEnv(league=league, max_turns=max_turns, opponent=opponent)
         env = Monitor(env)
+        env = ActionMasker(env, mask_fn)  # ActionMasker last so it's visible
         return env
     return _init
 
 
 def create_model(env, device="auto"):
-    """Create PPO model with CompactUNetExtractor."""
-    model = PPO(
+    """Create MaskablePPO model with CompactUNetExtractor."""
+    # Dynamic batch size: divide total buffer into 4 chunks
+    n_steps = 1024
+    total_states = n_steps * env.num_envs
+    dynamic_batch_size = total_states // 4  # 4 chunks
+
+    print(f"Total buffer: {total_states} states. Batch size (1/4 chunk): {dynamic_batch_size}")
+
+    model = MaskablePPO(
         "CnnPolicy",
         env,
         policy_kwargs={
             "features_extractor_class": CompactUNetExtractor,
-            "features_extractor_kwargs": {"features_dim": 64},
-            "net_arch": {"pi": [32], "vf": [32]},
-            "activation_fn": torch.nn.Tanh,
+            "features_extractor_kwargs": {"features_dim": 256},
+            "net_arch": {"pi": [256, 256], "vf": [256, 256]},
+            "activation_fn": torch.nn.ReLU,
         },
         learning_rate=3e-4,
-        n_steps=1024,
-        batch_size=128,
-        n_epochs=10,
+        n_steps=n_steps,
+        batch_size=dynamic_batch_size,
+        n_epochs=4,  # pairs with 4 chunks
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.05,
+        ent_coef=0.1,
         vf_coef=0.5,
         max_grad_norm=0.5,
         device=device,
@@ -217,7 +233,7 @@ def train(args):
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    n_envs = min(args.n_envs, os.cpu_count() or 4)
+    n_envs = args.n_envs
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
     print(f"Training config: {n_envs} envs, device={device}")
     print(f"Total steps: {args.total_steps:,}, warmup: {args.warmup_steps:,}")
@@ -256,7 +272,7 @@ def train(args):
                         for i in range(n_envs)])
 
     if warmup_path and warmup_path.exists():
-        model = PPO.load(str(warmup_path), env=envs, device=device)
+        model = MaskablePPO.load(str(warmup_path), env=envs, device=device)
         print(f"Loaded warmup model from {warmup_path}")
     else:
         model = create_model(envs, device=device)
@@ -269,7 +285,7 @@ def train(args):
         SelfPlayCallback(
             eval_freq=args.eval_freq,
             n_eval_games=args.n_eval_games,
-            update_threshold=0.60,
+            update_threshold=0.80,
             patience_threshold=0.55,
             patience_evals=3,
             checkpoint_dir=str(CHECKPOINT_DIR),
