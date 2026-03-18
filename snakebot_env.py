@@ -242,15 +242,14 @@ class SnakeBotEnv(gymnasium.Env):
     #     return obs, total_reward, terminated, truncated, {}
     
     def step(self, action):
-        # 1. Capture State BEFORE the move
+        # 1. Capture State BEFORE
         my_old_score = self.lib.engine_body_score(self.handle, 0)
         prev_positions = self._get_head_positions(player=0)
-        H = self.lib.engine_get_height(self.handle)
         
-        # 2. Build my actions
+        # 2. Build actions
         my_actions = self._build_actions(action, player=0)
 
-        # 3. Handle Opponent actions (with Masking Fix)
+        # 3. Handle Opponent (Masking Fix)
         if self.opponent is not None:
             opp_obs = self._get_obs(viewer=1)
             opp_masks = self.action_masks(player=1) 
@@ -259,64 +258,48 @@ class SnakeBotEnv(gymnasium.Env):
         else:
             opp_actions = self._random_actions(player=1)
 
-        # 4. Step the C++ engine
+        # 4. Step Engine
         all_acts = my_actions + opp_actions
-        n_birds_total = len(all_acts) // 2
+        n = len(all_acts) // 2
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
-        terminal = self.lib.engine_step(self.handle, arr, n_birds_total)
+        terminal = self.lib.engine_step(self.handle, arr, n)
 
-        # 5. Capture State AFTER the move
+        # 5. Capture State AFTER
         my_new_score = self.lib.engine_body_score(self.handle, 0)
-        opp_score = self.lib.engine_body_score(self.handle, 1)
         curr_positions = self._get_head_positions(player=0)
 
-        # 6. CALCULATE SHAPED REWARDS (Mid-game signals)
+        # 6. CALCULATE REWARDS
         
-        # A. Apple Reward (+0.15)
+        # A. High Apple Reward (+0.25) - Make them hunt!
         apples_eaten = max(0, my_new_score - my_old_score)
-        apple_reward = apples_eaten * 0.15
+        apple_reward = apples_eaten * 0.3
 
-        # B. Stateful Stall Penalty (Anti-UP spam)
+        # B. AGGRESSIVE Stall Penalty
+        # We remove the 3-turn grace period. If you don't move, you pay.
         stall_penalty = 0.0
         for bid, prev_pos in prev_positions.items():
             if bid in curr_positions:
                 if prev_pos == curr_positions[bid]:
                     self.stall_counts[bid] = self.stall_counts.get(bid, 0) + 1
-                    if self.stall_counts[bid] >= 3:
-                        stall_penalty -= 0.1 * (self.stall_counts[bid] - 2)
+                    # Immediate punishment starting at -0.2
+                    stall_penalty -= 0.7 * self.stall_counts[bid]
                 else:
                     self.stall_counts[bid] = 0
             else:
                 self.stall_counts.pop(bid, None)
 
-        # C. Height Safety Reward (+0.04 max)
-        # Encourages staying elevated to avoid gravity deaths
-        if curr_positions:
-            avg_y = sum(pos[1] for pos in curr_positions.values()) / len(curr_positions)
-            height_reward = 0.04 * (1.0 - avg_y / (H - 1))
-        else:
-            height_reward = 0.0
+        # 7. APPLY HARD CAP
+        # We removed height/lead rewards to keep the signal pure
+        shaped_step_total = apple_reward + stall_penalty
+        clamped_shaped_reward = max(-0.5, min(0.5, shaped_step_total))
 
-        # D. Score Lead Reward (+0.02 max)
-        # Encourages keeping a lead over the opponent
-        lead_reward = 0.02 * (my_new_score - opp_score) / max(my_new_score + opp_score, 1)
-
-        # 7. APPLY HARD CAP TO SHAPED REWARDS
-        # This prevents shaped rewards from ever outweighing the win/loss (+1/-1)
-        shaped_step_total = apple_reward + stall_penalty + height_reward + lead_reward
-        clamped_shaped_reward = max(-0.3, min(0.3, shaped_step_total))
-
-        # 8. Final Reward Calculation
+        # 8. Final Reward
         obs = self._get_obs(viewer=0)
         terminal_reward = self._compute_reward(bool(terminal))
         
-        # Final = Terminal (High priority) + Clamped Shapes (Low priority)
         total_reward = terminal_reward + clamped_shaped_reward
 
-        terminated = bool(terminal)
-        truncated = False
-
-        return obs, total_reward, terminated, truncated, {}
+        return obs, total_reward, bool(terminal), False, {}
 
 
     # def step(self, action):
