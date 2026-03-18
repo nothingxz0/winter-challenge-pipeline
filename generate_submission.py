@@ -193,43 +193,44 @@ def generate_cpp(data):
     P.append('static void sp(const float*i,float*t,float*o,int H,int W,int ic,int oc,int di,int dbi,int pi,int pbi){dw(i,t,H,W,ic,Wp[di],Bp[dbi]);pw(t,o,H,W,ic,oc,Wp[pi],Bp[pbi]);rl(o,oc*H*W);}\n')
 
     # ---- Forward pass (64x64 fixed) ----
-    P.append('static float ft[64],ph[32],al[16];\nstatic void fwd(){static float t1[400000],t2[400000];\n')
+    P.append('static float ft[128],ph1[128],ph2[128],al[16];\nstatic void fwd(){static float t1[400000],t2[400000];\n')
 
     # enc1: 64x64
-    P.append(f'c33(obs,t1,64,64,7,12,Wp[{wi("enc1.conv1.weight")}],Bp[{bi("enc1.conv1.bias")}]);rl(t1,12*4096);\n')
-    P.append(f'c33(t1,s1,64,64,12,12,Wp[{wi("enc1.conv2.weight")}],Bp[{bi("enc1.conv2.bias")}]);rl(s1,12*4096);mp(s1,ba,64,64,12);\n')
+    P.append(f'c33(obs,t1,64,64,7,8,Wp[{wi("enc1.conv1.weight")}],Bp[{bi("enc1.conv1.bias")}]);rl(t1,8*4096);\n')
+    P.append(f'c33(t1,s1,64,64,8,8,Wp[{wi("enc1.conv2.weight")}],Bp[{bi("enc1.conv2.bias")}]);rl(s1,8*4096);mp(s1,ba,64,64,8);\n')
 
     # enc2: 32x32
-    P.append(f'sp(ba,t1,t2,32,32,12,24,{wi("enc2.conv1.depthwise.weight")},{bi("enc2.conv1.depthwise.bias")},{wi("enc2.conv1.pointwise.weight")},{bi("enc2.conv1.pointwise.bias")});\n')
-    P.append(f'sp(t2,t1,s2,32,32,24,24,{wi("enc2.conv2.depthwise.weight")},{bi("enc2.conv2.depthwise.bias")},{wi("enc2.conv2.pointwise.weight")},{bi("enc2.conv2.pointwise.bias")});mp(s2,ba,32,32,24);\n')
+    P.append(f'sp(ba,t1,t2,32,32,8,16,{wi("enc2.conv1.depthwise.weight")},{bi("enc2.conv1.depthwise.bias")},{wi("enc2.conv1.pointwise.weight")},{bi("enc2.conv1.pointwise.bias")});\n')
+    P.append(f'sp(t2,t1,s2,32,32,16,16,{wi("enc2.conv2.depthwise.weight")},{bi("enc2.conv2.depthwise.bias")},{wi("enc2.conv2.pointwise.weight")},{bi("enc2.conv2.pointwise.bias")});mp(s2,ba,32,32,16);\n')
 
     # enc3: 16x16
-    P.append(f'sp(ba,t1,t2,16,16,24,48,{wi("enc3.conv1.depthwise.weight")},{bi("enc3.conv1.depthwise.bias")},{wi("enc3.conv1.pointwise.weight")},{bi("enc3.conv1.pointwise.bias")});\n')
-    P.append(f'sp(t2,t1,s3,16,16,48,48,{wi("enc3.conv2.depthwise.weight")},{bi("enc3.conv2.depthwise.bias")},{wi("enc3.conv2.pointwise.weight")},{bi("enc3.conv2.pointwise.bias")});mp(s3,ba,16,16,48);\n')
+    P.append(f'sp(ba,t1,t2,16,16,16,32,{wi("enc3.conv1.depthwise.weight")},{bi("enc3.conv1.depthwise.bias")},{wi("enc3.conv1.pointwise.weight")},{bi("enc3.conv1.pointwise.bias")});\n')
+    P.append(f'sp(t2,t1,s3,16,16,32,32,{wi("enc3.conv2.depthwise.weight")},{bi("enc3.conv2.depthwise.bias")},{wi("enc3.conv2.pointwise.weight")},{bi("enc3.conv2.pointwise.bias")});mp(s3,ba,16,16,32);\n')
 
     # enc4: 8x8
-    P.append(f'sp(ba,t1,t2,8,8,48,96,{wi("enc4.conv1.depthwise.weight")},{bi("enc4.conv1.depthwise.bias")},{wi("enc4.conv1.pointwise.weight")},{bi("enc4.conv1.pointwise.bias")});\n')
-    P.append(f'sp(t2,t1,bb,8,8,96,96,{wi("enc4.conv2.depthwise.weight")},{bi("enc4.conv2.depthwise.bias")},{wi("enc4.conv2.pointwise.weight")},{bi("enc4.conv2.pointwise.bias")});\n')
+    P.append(f'sp(ba,t1,t2,8,8,32,64,{wi("enc4.conv1.depthwise.weight")},{bi("enc4.conv1.depthwise.bias")},{wi("enc4.conv1.pointwise.weight")},{bi("enc4.conv1.pointwise.bias")});\n')
+    P.append(f'sp(t2,t1,bb,8,8,64,64,{wi("enc4.conv2.depthwise.weight")},{bi("enc4.conv2.depthwise.bias")},{wi("enc4.conv2.pointwise.weight")},{bi("enc4.conv2.pointwise.bias")});\n')
 
     # decoder
-    P.append(f'ct(bb,ba,8,8,96,48,Wp[{wi("up4.weight")}],Bp[{bi("up4.bias")}]);cc(ba,s3,bb,16,16,48,48);\n')
-    P.append(f'sp(bb,t1,t2,16,16,96,48,{wi("dec4.conv1.depthwise.weight")},{bi("dec4.conv1.depthwise.bias")},{wi("dec4.conv1.pointwise.weight")},{bi("dec4.conv1.pointwise.bias")});\n')
-    P.append(f'sp(t2,t1,ba,16,16,48,48,{wi("dec4.conv2.depthwise.weight")},{bi("dec4.conv2.depthwise.bias")},{wi("dec4.conv2.pointwise.weight")},{bi("dec4.conv2.pointwise.bias")});\n')
+    P.append(f'ct(bb,ba,8,8,64,32,Wp[{wi("up4.weight")}],Bp[{bi("up4.bias")}]);cc(ba,s3,bb,16,16,32,32);\n')
+    P.append(f'sp(bb,t1,t2,16,16,64,32,{wi("dec4.conv1.depthwise.weight")},{bi("dec4.conv1.depthwise.bias")},{wi("dec4.conv1.pointwise.weight")},{bi("dec4.conv1.pointwise.bias")});\n')
+    P.append(f'sp(t2,t1,ba,16,16,32,32,{wi("dec4.conv2.depthwise.weight")},{bi("dec4.conv2.depthwise.bias")},{wi("dec4.conv2.pointwise.weight")},{bi("dec4.conv2.pointwise.bias")});\n')
 
-    P.append(f'ct(ba,bb,16,16,48,24,Wp[{wi("up3.weight")}],Bp[{bi("up3.bias")}]);cc(bb,s2,ba,32,32,24,24);\n')
-    P.append(f'sp(ba,t1,t2,32,32,48,24,{wi("dec3.conv1.depthwise.weight")},{bi("dec3.conv1.depthwise.bias")},{wi("dec3.conv1.pointwise.weight")},{bi("dec3.conv1.pointwise.bias")});\n')
-    P.append(f'sp(t2,t1,bb,32,32,24,24,{wi("dec3.conv2.depthwise.weight")},{bi("dec3.conv2.depthwise.bias")},{wi("dec3.conv2.pointwise.weight")},{bi("dec3.conv2.pointwise.bias")});\n')
+    P.append(f'ct(ba,bb,16,16,32,16,Wp[{wi("up3.weight")}],Bp[{bi("up3.bias")}]);cc(bb,s2,ba,32,32,16,16);\n')
+    P.append(f'sp(ba,t1,t2,32,32,32,16,{wi("dec3.conv1.depthwise.weight")},{bi("dec3.conv1.depthwise.bias")},{wi("dec3.conv1.pointwise.weight")},{bi("dec3.conv1.pointwise.bias")});\n')
+    P.append(f'sp(t2,t1,bb,32,32,16,16,{wi("dec3.conv2.depthwise.weight")},{bi("dec3.conv2.depthwise.bias")},{wi("dec3.conv2.pointwise.weight")},{bi("dec3.conv2.pointwise.bias")});\n')
 
-    P.append(f'ct(bb,ba,32,32,24,12,Wp[{wi("up2.weight")}],Bp[{bi("up2.bias")}]);cc(ba,s1,bb,64,64,12,12);\n')
-    P.append(f'sp(bb,t1,t2,64,64,24,12,{wi("dec2.conv1.depthwise.weight")},{bi("dec2.conv1.depthwise.bias")},{wi("dec2.conv1.pointwise.weight")},{bi("dec2.conv1.pointwise.bias")});\n')
-    P.append(f'sp(t2,t1,ba,64,64,12,12,{wi("dec2.conv2.depthwise.weight")},{bi("dec2.conv2.depthwise.bias")},{wi("dec2.conv2.pointwise.weight")},{bi("dec2.conv2.pointwise.bias")});\n')
+    P.append(f'ct(bb,ba,32,32,16,8,Wp[{wi("up2.weight")}],Bp[{bi("up2.bias")}]);cc(ba,s1,bb,64,64,8,8);\n')
+    P.append(f'sp(bb,t1,t2,64,64,16,8,{wi("dec2.conv1.depthwise.weight")},{bi("dec2.conv1.depthwise.bias")},{wi("dec2.conv1.pointwise.weight")},{bi("dec2.conv1.pointwise.bias")});\n')
+    P.append(f'sp(t2,t1,ba,64,64,8,8,{wi("dec2.conv2.depthwise.weight")},{bi("dec2.conv2.depthwise.bias")},{wi("dec2.conv2.pointwise.weight")},{bi("dec2.conv2.pointwise.bias")});\n')
 
     # final
-    P.append(f'pw(ba,bb,64,64,12,6,Wp[{wi("final_conv.weight")}],Bp[{bi("final_conv.bias")}]);\n')
-    P.append('static float pl[96];ap(bb,pl,64,64,6,4,4);\n')
-    P.append(f'ln(pl,ft,96,64,Wp[{wi("feature_proj.weight")}],Bp[{bi("feature_proj.bias")}]);\n')
-    P.append(f'ln(ft,ph,64,32,Wp[{wi("policy_net.0.weight")}],Bp[{bi("policy_net.0.bias")}]);for(int i=0;i<32;i++)ph[i]=tanhf(ph[i]);\n')
-    P.append(f'ln(ph,al,32,16,Wp[{wi("action_net.weight")}],Bp[{bi("action_net.bias")}]);}}\n')
+    P.append(f'pw(ba,bb,64,64,8,4,Wp[{wi("final_conv.weight")}],Bp[{bi("final_conv.bias")}]);\n')
+    P.append('static float pl[64];ap(bb,pl,64,64,4,4,4);\n')
+    P.append(f'ln(pl,ft,64,128,Wp[{wi("feature_proj.weight")}],Bp[{bi("feature_proj.bias")}]);rl(ft,128);\n')
+    P.append(f'ln(ft,ph1,128,128,Wp[{wi("policy_net.0.weight")}],Bp[{bi("policy_net.0.bias")}]);rl(ph1,128);\n')
+    P.append(f'ln(ph1,ph2,128,128,Wp[{wi("policy_net.2.weight")}],Bp[{bi("policy_net.2.bias")}]);rl(ph2,128);\n')
+    P.append(f'ln(ph2,al,128,16,Wp[{wi("action_net.weight")}],Bp[{bi("action_net.bias")}]);}}\n')
 
     # ---- Obs extraction (64x64) ----
     P.append('static void exO(){memset(obs,0,7*64*64*4);\n')

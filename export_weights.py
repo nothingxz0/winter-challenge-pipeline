@@ -20,7 +20,7 @@ import torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
 from unet_policy import CompactUNetExtractor
 
 SCRIPT_DIR = Path(__file__).parent
@@ -267,7 +267,7 @@ def export(args):
         sys.exit(1)
 
     print(f"Loading model: {model_path}")
-    model = PPO.load(model_path)
+    model = MaskablePPO.load(model_path)
 
     print("Extracting weights (with BN fusion)...")
     layers = extract_all_weights(model)

@@ -79,29 +79,29 @@ class CompactUNetExtractor(BaseFeaturesExtractor):
 
         self.input_channels = channels
 
-        # Encoder levels - Reduced channel counts for 90k budget
-        self.enc1 = CompactUNetBlock(channels, 12, use_separable=False)  # Input layer
-        self.enc2 = CompactUNetBlock(12, 24, use_separable=True)
-        self.enc3 = CompactUNetBlock(24, 48, use_separable=True)
-        self.enc4 = CompactUNetBlock(48, 96, use_separable=True)
+        # Encoder levels - Leaner channels to fit 100k char limit
+        self.enc1 = CompactUNetBlock(channels, 8, use_separable=False)  # Input layer
+        self.enc2 = CompactUNetBlock(8, 16, use_separable=True)
+        self.enc3 = CompactUNetBlock(16, 32, use_separable=True)
+        self.enc4 = CompactUNetBlock(32, 64, use_separable=True)
 
         # Max pooling for downsampling
         self.pool = nn.MaxPool2d(2)
 
-        # Decoder with skip connections
-        self.up4 = nn.ConvTranspose2d(96, 48, 2, stride=2)
-        self.dec4 = CompactUNetBlock(96, 48, use_separable=True)  # 48 + 48 skip
+        # Decoder with skip connections - Leaner channels
+        self.up4 = nn.ConvTranspose2d(64, 32, 2, stride=2)
+        self.dec4 = CompactUNetBlock(64, 32, use_separable=True)  # 32 + 32 skip
 
-        self.up3 = nn.ConvTranspose2d(48, 24, 2, stride=2)
-        self.dec3 = CompactUNetBlock(48, 24, use_separable=True)   # 24 + 24 skip
+        self.up3 = nn.ConvTranspose2d(32, 16, 2, stride=2)
+        self.dec3 = CompactUNetBlock(32, 16, use_separable=True)   # 16 + 16 skip
 
-        self.up2 = nn.ConvTranspose2d(24, 12, 2, stride=2)
-        self.dec2 = CompactUNetBlock(24, 12, use_separable=True)   # 12 + 12 skip
+        self.up2 = nn.ConvTranspose2d(16, 8, 2, stride=2)
+        self.dec2 = CompactUNetBlock(16, 8, use_separable=True)   # 8 + 8 skip
 
         # Final feature extraction - Smaller for budget
-        self.final_conv = nn.Conv2d(12, 6, 1)  # Reduce channels
+        self.final_conv = nn.Conv2d(8, 4, 1)  # Reduce channels
         self.adaptive_pool = nn.AdaptiveAvgPool2d((4, 4))  # Fixed output size
-        self.feature_proj = nn.Linear(6 * 4 * 4, self.features_dim)
+        self.feature_proj = nn.Linear(4 * 4 * 4, self.features_dim)
         self.dropout = nn.Dropout(0.1)
 
         # Initialize weights

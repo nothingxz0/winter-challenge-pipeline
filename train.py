@@ -209,8 +209,8 @@ def create_model(env, device="auto"):
         env,
         policy_kwargs={
             "features_extractor_class": CompactUNetExtractor,
-            "features_extractor_kwargs": {"features_dim": 256},
-            "net_arch": {"pi": [256, 256], "vf": [256, 256]},
+            "features_extractor_kwargs": {"features_dim": 128},
+            "net_arch": {"pi": [128, 128], "vf": [128, 128]},  # vf small since we don't export it
             "activation_fn": torch.nn.ReLU,
         },
         learning_rate=3e-4,
