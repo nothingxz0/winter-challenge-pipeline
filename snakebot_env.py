@@ -158,31 +158,10 @@ class SnakeBotEnv(gymnasium.Env):
         obs = self._get_obs(viewer=0)
         return obs, {}
 
-    def _get_head_positions(self, player=0):
-            """Returns a dictionary of {bird_id: (head_x, head_y)} for alive birds."""
-            positions = {}
-            n = self.lib.engine_bird_count(self.handle)
-            bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
-            
-            for i in range(n):
-                bid = ctypes.c_int()
-                owner = ctypes.c_int()
-                a = ctypes.c_int()
-                body = (ctypes.c_int * 400)()
-                blen = ctypes.c_int()
-                
-                self.lib.engine_get_bird(
-                    self.handle, i,
-                    ctypes.byref(bid), ctypes.byref(owner),
-                    ctypes.byref(a), body, ctypes.byref(blen)
-                )
-                
-                # If the bird belongs to the player and is alive, body[0] and body[1] are the head x,y
-                if bid.value in bird_ids and a.value:
-                    positions[bid.value] = (body[0], body[1])
-                    
-            return positions
     def step(self, action):
+        # 1. Track score BEFORE the move
+        my_old_score = self.lib.engine_body_score(self.handle, 0)
+        
         # Build my actions
         my_actions = self._build_actions(action, player=0)
 
@@ -194,18 +173,56 @@ class SnakeBotEnv(gymnasium.Env):
         else:
             opp_actions = self._random_actions(player=1)
 
-        # Merge all actions
+        # Merge all actions and step the C++ engine
         all_acts = my_actions + opp_actions
         n = len(all_acts) // 2
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n)
 
+        # 2. Track score AFTER the move
+        my_new_score = self.lib.engine_body_score(self.handle, 0)
+        
+        # 3. Calculate Shaped Reward (+0.2 for every apple eaten)
+        # We use max(0, ...) so we don't accidentally penalize it here if a snake dies and the score drops
+        apples_eaten = max(0, my_new_score - my_old_score)
+        step_reward = apples_eaten * 0.2
+
+        # Calculate final terminal reward (+1.0, -1.0, 0.0)
         obs = self._get_obs(viewer=0)
-        reward = self._compute_reward(bool(terminal))
+        terminal_reward = self._compute_reward(bool(terminal))
+        
+        # 4. Combine them (The AI now cares about apples AND winning)
+        total_reward = step_reward + terminal_reward
+
         terminated = bool(terminal)
         truncated = False
 
-        return obs, reward, terminated, truncated, {}
+        return obs, total_reward, terminated, truncated, {}
+
+    # def step(self, action):
+    #     # Build my actions
+    #     my_actions = self._build_actions(action, player=0)
+
+    #     # Opponent actions
+    #     if self.opponent is not None:
+    #         opp_obs = self._get_obs(viewer=1)
+    #         opp_act = self.opponent(opp_obs)
+    #         opp_actions = self._build_actions(opp_act, player=1)
+    #     else:
+    #         opp_actions = self._random_actions(player=1)
+
+    #     # Merge all actions
+    #     all_acts = my_actions + opp_actions
+    #     n = len(all_acts) // 2
+    #     arr = (ctypes.c_int * len(all_acts))(*all_acts)
+    #     terminal = self.lib.engine_step(self.handle, arr, n)
+
+    #     obs = self._get_obs(viewer=0)
+    #     reward = self._compute_reward(bool(terminal))
+    #     terminated = bool(terminal)
+    #     truncated = False
+
+    #     return obs, reward, terminated, truncated, {}
 
     def close(self):
         if self.handle is not None:
@@ -292,9 +309,9 @@ class SnakeBotEnv(gymnasium.Env):
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
         if my_score > opp_score:
-            return 1.0
+            return 5.0
         if my_score < opp_score:
-            return -1.0
+            return -5.0
 
         # If the score is tied (including a 0-0 tie), nobody gets a win.
         # This completely destroys the "just outlive the idiot" strategy.
