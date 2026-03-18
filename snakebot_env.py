@@ -158,11 +158,41 @@ class SnakeBotEnv(gymnasium.Env):
         obs = self._get_obs(viewer=0)
         return obs, {}
 
+    def _get_head_positions(self, player=0):
+        """Returns a dictionary of {bird_id: (head_x, head_y)} for alive birds."""
+        positions = {}
+        n = self.lib.engine_bird_count(self.handle)
+
+        for i in range(n):
+            bid = ctypes.c_int()
+            owner = ctypes.c_int()
+            alive = ctypes.c_int()
+            length = ctypes.c_int()
+            # Create a C-array to hold the body coordinates (up to 200 parts * 2 for X/Y)
+            body_xy = (ctypes.c_int * 400)()
+
+            # Call the actual C++ function exported in your engine
+            self.lib.engine_get_bird(
+                self.handle, i, 
+                ctypes.byref(bid), ctypes.byref(owner), ctypes.byref(alive),
+                body_xy, ctypes.byref(length)
+            )
+
+            # If the bird belongs to us and is alive
+            if owner.value == player and alive.value == 1 and length.value > 0:
+                # The Head is always the first two coordinates in the array!
+                hx = body_xy[0]
+                hy = body_xy[1]
+                positions[bid.value] = (hx, hy)
+                
+        return positions
+    
     def step(self, action):
-        # 1. Track score BEFORE the move
+        # 1. Track State BEFORE the move
         my_old_score = self.lib.engine_body_score(self.handle, 0)
+        prev_positions = self._get_head_positions(player=0)
         
-        # Build my actions
+        # Build actions
         my_actions = self._build_actions(action, player=0)
 
         # Opponent actions
@@ -179,26 +209,34 @@ class SnakeBotEnv(gymnasium.Env):
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n)
 
-        # 2. Track score AFTER the move
+        # 2. Track State AFTER the move
         my_new_score = self.lib.engine_body_score(self.handle, 0)
+        curr_positions = self._get_head_positions(player=0)
         
-        # 3. Calculate Shaped Reward (+0.2 for every apple eaten)
-        # We use max(0, ...) so we don't accidentally penalize it here if a snake dies and the score drops
+        # 3. CALCULATE SHAPED REWARDS
+        
+        # A. The Apple Breadcrumbs (+0.2)
         apples_eaten = max(0, my_new_score - my_old_score)
         step_reward = apples_eaten * 0.2
 
-        # Calculate final terminal reward (+1.0, -1.0, 0.0)
+        # B. The "Hot Stove" Stuck Penalty (-0.5)
+        position_penalty = 0.0
+        for bid, prev_pos in prev_positions.items():
+            if bid in curr_positions:  # If the bird is still alive
+                if prev_pos == curr_positions[bid]:
+                    position_penalty -= 0.5  # Punish grinding against a wall
+
+        # 4. Calculate Final Terminal Reward (+5.0, -5.0, 0.0)
         obs = self._get_obs(viewer=0)
         terminal_reward = self._compute_reward(bool(terminal))
         
-        # 4. Combine them (The AI now cares about apples AND winning)
-        total_reward = step_reward + terminal_reward
+        # 5. Combine everything!
+        total_reward = step_reward + position_penalty + terminal_reward
 
         terminated = bool(terminal)
         truncated = False
 
         return obs, total_reward, terminated, truncated, {}
-
     # def step(self, action):
     #     # Build my actions
     #     my_actions = self._build_actions(action, player=0)
@@ -309,9 +347,9 @@ class SnakeBotEnv(gymnasium.Env):
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
         if my_score > opp_score:
-            return 5.0
+            return 2.0
         if my_score < opp_score:
-            return -5.0
+            return -2.0
 
         # If the score is tied (including a 0-0 tie), nobody gets a win.
         # This completely destroys the "just outlive the idiot" strategy.
