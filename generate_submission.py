@@ -77,15 +77,15 @@ def generate_cpp(data):
     weight_bytes = np.concatenate(all_uint8).tobytes()
     bias_start = len(weight_bytes)
 
-    all_bias_f32 = []
+    all_bias_f16 = []
     b_offsets = {}
     b_off = 0
     for name, float_data, shape in bias_layers:
         b_offsets[name] = (b_off, float_data.size)
-        all_bias_f32.append(float_data.flatten().astype(np.float32))
+        all_bias_f16.append(float_data.flatten().astype(np.float16)) # Changed to float16
         b_off += float_data.size
 
-    bias_bytes = np.concatenate(all_bias_f32).tobytes()
+    bias_bytes = np.concatenate(all_bias_f16).tobytes()
     total_blob = weight_bytes + bias_bytes
     encoded, orig_blob_len, table = encode_ascii85(total_blob)
     print(f"Blob: {orig_blob_len} bytes -> {len(encoded)} chars (ascii85)")
@@ -104,7 +104,7 @@ def generate_cpp(data):
 
     # ---- Headers ----
     P.append('#pragma GCC optimize("O3,unroll-loops")\n')
-    P.append('#include<iostream>\n#include<string>\n#include<cstring>\n#include<cmath>\n#include<algorithm>\nusing namespace std;\n')
+    P.append('#include<iostream>\n#include<string>\n#include <stdint.h>\n#include<cstring>\n#include<cmath>\n#include<algorithm>\nusing namespace std;\n')
     P.append('static const int DX[4]={0,1,0,-1},DY[4]={-1,0,1,0},OP[4]={2,3,0,1};\n')
     P.append('static const char*DN[4]={"UP","RIGHT","DOWN","LEFT"};\n')
     P.append('static int W,H,myId,nA,aX[2000],aY[2000],nB;\n')
@@ -150,7 +150,10 @@ def generate_cpp(data):
     P.append('while(*p){unsigned v=0;for(int i=0;i<5;i++){v=v*85+D[(unsigned char)*p];p++;}r[n++]=(v>>24)&0xFF;r[n++]=(v>>16)&0xFF;r[n++]=(v>>8)&0xFF;r[n++]=v&0xFF;}\n')
     P.append(f'for(int i=0;i<{total_int8};i++)AW[i]=((int)r[i]-128);\n')
     P.append(f'for(int i=0;i<{len(weight_layers)};i++){{Wp[i]=AW+WO[i];for(int j=0;j<WZ[i];j++)Wp[i][j]*=SC[i];}}\n')
-    P.append(f'memcpy(AB,r+{bias_start},{total_bias * 4});\n')
+    # Tiny inline lambda to convert Float16 bytes to Float32 safely
+    P.append('auto h2f=[](unsigned short h){uint32_t e=(h>>10)&31,m=h&1023,s=(h&32768)<<16;if(!e)return 0.0f;uint32_t f=s|((e+112)<<23)|(m<<13);float v;memcpy(&v,&f,4);return v;};\n')
+    # Read two bytes at a time (handles alignment safety) and decode
+    P.append(f'for(int i=0;i<{total_bias};i++){{unsigned short h=r[{bias_start}+i*2]|(r[{bias_start}+i*2+1]<<8);AB[i]=h2f(h);}}\n')
     P.append(f'for(int i=0;i<{len(bias_layers)};i++)Bp[i]=AB+BO[i];\n')
     P.append('}\n')
 
