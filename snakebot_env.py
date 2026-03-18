@@ -159,6 +159,10 @@ class SnakeBotEnv(gymnasium.Env):
         return obs, {}
 
     def step(self, action):
+        # --- Record state BEFORE the step ---
+        old_score = self.lib.engine_body_score(self.handle, 0)
+        old_alive_count = len(self.get_alive_bird_ids(player=0))
+
         # Build my actions
         my_actions = self._build_actions(action, player=0)
 
@@ -175,13 +179,31 @@ class SnakeBotEnv(gymnasium.Env):
         n = len(all_acts) // 2
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n)
+        terminated = bool(terminal)
+
+        # --- Record state AFTER the step ---
+        new_score = self.lib.engine_body_score(self.handle, 0)
+        new_alive_count = len(self.get_alive_bird_ids(player=0))
+
+        # --- SHAPE THE REWARD ---
+        # 1. Time tax (prevents stalling/spinning in circles)
+        step_reward = -0.01
+
+        # 2. Score changes (handles BOTH eating +0.5 and beheading -0.5)
+        step_reward += (new_score - old_score) * 0.5
+
+        # 3. Death penalty
+        if new_alive_count < old_alive_count:
+            step_reward -= (old_alive_count - new_alive_count) * 1.0
+
+        # 4. Terminal win/loss reward (scaled up)
+        if terminated:
+            step_reward += self._compute_terminal_reward() * 5.0
 
         obs = self._get_obs(viewer=0)
-        reward = self._compute_reward(bool(terminal))
-        terminated = bool(terminal)
         truncated = False
 
-        return obs, reward, terminated, truncated, {}
+        return obs, step_reward, terminated, truncated, {}
 
     def close(self):
         if self.handle is not None:
@@ -248,10 +270,8 @@ class SnakeBotEnv(gymnasium.Env):
             acts.extend([bid, random.randint(0, 3)])
         return acts
 
-    def _compute_reward(self, terminal):
-        """Terminal-only reward: +1 win, -1 loss, 0 draw."""
-        if not terminal:
-            return 0.0
+    def _compute_terminal_reward(self):
+        """Terminal reward: +1 win, -1 loss, 0 draw."""
         my_score = self.lib.engine_body_score(self.handle, 0)
         opp_score = self.lib.engine_body_score(self.handle, 1)
         if my_score > opp_score:

@@ -1,3 +1,5 @@
 checkpoints/
 logs/
 __pycache__/
+exported_weights_int8.npz
+backup_checkpoints/

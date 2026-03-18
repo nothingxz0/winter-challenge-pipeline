@@ -49,9 +49,9 @@ def test_step_returns_correct_types():
     assert isinstance(truncated, bool)
     assert isinstance(info, dict)
 
-    # Reward should be 0 on non-terminal step
-    if not terminated:
-        assert reward == 0.0, f"Non-terminal reward should be 0, got {reward}"
+    # With dense rewards, non-terminal steps have small rewards (time tax, apples, etc.)
+    # Just check it's a reasonable range
+    assert -10.0 <= reward <= 10.0, f"Reward out of range: {reward}"
 
     env.close()
     print("  [OK] test_step_returns_correct_types")
@@ -71,14 +71,15 @@ def test_game_terminates():
 
     assert terminated, f"Game should terminate within 200 turns, took {steps}"
     assert steps <= 200, f"Expected max 200 turns, got {steps}"
-    assert reward in {-1.0, 0.0, 1.0}, f"Terminal reward should be -1/0/+1, got {reward}"
+    # With dense rewards, terminal reward includes accumulated step rewards
+    assert -15.0 <= reward <= 15.0, f"Terminal reward out of range: {reward}"
 
     env.close()
     print(f"  [OK] test_game_terminates (after {steps} steps, reward={reward})")
 
 
 def test_reward_values():
-    """Terminal reward should be +1, -1, or 0."""
+    """Dense rewards: check we get varied rewards across games."""
     env = SnakeBotEnv(league=4, max_turns=50)  # Short games for speed
     results = []
 
@@ -90,8 +91,9 @@ def test_reward_values():
             obs, reward, terminated, truncated, info = env.step(action)
         results.append(reward)
 
-    assert all(r in {-1.0, 0.0, 1.0} for r in results), f"Bad rewards: {results}"
-    # Should get at least 2 different results over 20 games
+    # With dense rewards, results should be in reasonable range
+    assert all(-15.0 <= r <= 15.0 for r in results), f"Rewards out of range: {results}"
+    # Should get varied results (not all identical)
     assert len(set(results)) >= 2, f"All same reward: {results}"
 
     env.close()
