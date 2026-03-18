@@ -126,8 +126,9 @@ class SelfPlayCallback(BaseCallback):
             terminated = False
 
             while not terminated:
-                # Get our action from the model
-                action, _ = self.model.predict(obs, deterministic=True)
+                # Get action masks and pass to model
+                action_masks = env.action_masks()
+                action, _ = self.model.predict(obs, deterministic=True, action_masks=action_masks)
                 obs, reward, terminated, _, _ = env.step(action)
 
             if reward > 0:
