@@ -135,8 +135,8 @@ class SelfPlayCallback(BaseCallback):
         ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
         opponent_model = MaskablePPO.load(str(ckpt_path))
 
-        def make_opponent(obs):
-            action, _ = opponent_model.predict(obs, deterministic=True)
+        def make_opponent(obs, masks):
+            action, _ = opponent_model.predict(obs, deterministic=True, action_masks=masks)
             return action
 
         # Update opponent in all vectorized environments
