@@ -187,19 +187,67 @@ class SnakeBotEnv(gymnasium.Env):
                 
         return positions
     
-    def step(self, action):
-        # 1. Track State BEFORE the move
-        my_old_score = self.lib.engine_body_score(self.handle, 0)
-        prev_positions = self._get_head_positions(player=0)
+    # def step(self, action):
+    #     # 1. Track State BEFORE the move
+    #     my_old_score = self.lib.engine_body_score(self.handle, 0)
+    #     prev_positions = self._get_head_positions(player=0)
         
-        # Build actions
+    #     # Build actions
+    #     my_actions = self._build_actions(action, player=0)
+
+    #     # Opponent actions
+    #     if self.opponent is not None:
+    #         opp_obs = self._get_obs(viewer=1)
+    #         opp_masks = self.action_masks(player=1) # Get opponent masks
+    #         opp_act = self.opponent(opp_obs, opp_masks) # Pass them in!
+    #         opp_actions = self._build_actions(opp_act, player=1)
+    #     else:
+    #         opp_actions = self._random_actions(player=1)
+
+    #     # Merge all actions and step the C++ engine
+    #     all_acts = my_actions + opp_actions
+    #     n = len(all_acts) // 2
+    #     arr = (ctypes.c_int * len(all_acts))(*all_acts)
+    #     terminal = self.lib.engine_step(self.handle, arr, n)
+
+    #     # 2. Track State AFTER the move
+    #     my_new_score = self.lib.engine_body_score(self.handle, 0)
+    #     curr_positions = self._get_head_positions(player=0)
+        
+    #     # 3. CALCULATE SHAPED REWARDS
+        
+    #     # A. The Apple Breadcrumbs (+0.2)
+    #     apples_eaten = max(0, my_new_score - my_old_score)
+    #     step_reward = apples_eaten * 1
+
+    #     # B. The "Hot Stove" Stuck Penalty (-0.5)
+    #     position_penalty = 0.0
+    #     for bid, prev_pos in prev_positions.items():
+    #         if bid in curr_positions:  # If the bird is still alive
+    #             if prev_pos == curr_positions[bid]:
+    #                 position_penalty -= 0.5  # Punish grinding against a wall
+
+    #     # 4. Calculate Final Terminal Reward (+5.0, -5.0, 0.0)
+    #     obs = self._get_obs(viewer=0)
+    #     terminal_reward = self._compute_reward(bool(terminal))
+        
+    #     # 5. Combine everything!
+    #     total_reward = step_reward + position_penalty + terminal_reward
+
+    #     terminated = bool(terminal)
+    #     truncated = False
+
+    #     return obs, total_reward, terminated, truncated, {}
+    
+    def step(self, action):
+        # Build my actions
         my_actions = self._build_actions(action, player=0)
 
-        # Opponent actions
+        # Opponent actions (KEEPING THE MASK FIX!)
         if self.opponent is not None:
             opp_obs = self._get_obs(viewer=1)
-            opp_masks = self.action_masks(player=1) # Get opponent masks
-            opp_act = self.opponent(opp_obs, opp_masks) # Pass them in!
+            opp_masks = self.action_masks(player=1) 
+            opp_act = self.opponent(opp_obs, opp_masks) 
             opp_actions = self._build_actions(opp_act, player=1)
         else:
             opp_actions = self._random_actions(player=1)
@@ -210,34 +258,15 @@ class SnakeBotEnv(gymnasium.Env):
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n)
 
-        # 2. Track State AFTER the move
-        my_new_score = self.lib.engine_body_score(self.handle, 0)
-        curr_positions = self._get_head_positions(player=0)
-        
-        # 3. CALCULATE SHAPED REWARDS
-        
-        # A. The Apple Breadcrumbs (+0.2)
-        apples_eaten = max(0, my_new_score - my_old_score)
-        step_reward = apples_eaten * 1
-
-        # B. The "Hot Stove" Stuck Penalty (-0.5)
-        position_penalty = 0.0
-        for bid, prev_pos in prev_positions.items():
-            if bid in curr_positions:  # If the bird is still alive
-                if prev_pos == curr_positions[bid]:
-                    position_penalty -= 0.5  # Punish grinding against a wall
-
-        # 4. Calculate Final Terminal Reward (+5.0, -5.0, 0.0)
+        # Pure terminal reward calculation
         obs = self._get_obs(viewer=0)
-        terminal_reward = self._compute_reward(bool(terminal))
+        reward = self._compute_reward(bool(terminal))
         
-        # 5. Combine everything!
-        total_reward = step_reward + position_penalty + terminal_reward
-
         terminated = bool(terminal)
         truncated = False
 
-        return obs, total_reward, terminated, truncated, {}
+        return obs, reward, terminated, truncated, {}
+
     # def step(self, action):
     #     # Build my actions
     #     my_actions = self._build_actions(action, player=0)
@@ -348,9 +377,9 @@ class SnakeBotEnv(gymnasium.Env):
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
         if my_score > opp_score:
-            return 2.0
+            return 1.0
         if my_score < opp_score:
-            return -2.0
+            return -1.0
 
         # If the score is tied (including a 0-0 tie), nobody gets a win.
         # This completely destroys the "just outlive the idiot" strategy.
