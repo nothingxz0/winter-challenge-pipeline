@@ -65,11 +65,14 @@ class SelfPlayCallback(BaseCallback):
         self.opponent_version = 0
         self.patience_count = 0
         self.eval_results = []
+        self.last_eval_step = 0
 
     def _on_step(self):
-        if self.num_timesteps % self.eval_freq != 0:
+        # Check if we crossed an eval threshold (not exact match)
+        if self.num_timesteps - self.last_eval_step < self.eval_freq:
             return True
 
+        self.last_eval_step = self.num_timesteps
         win_rate = self._evaluate()
         self.eval_results.append(win_rate)
 
