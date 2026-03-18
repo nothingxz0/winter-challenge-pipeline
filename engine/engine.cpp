@@ -636,7 +636,7 @@ struct GameState {
         cmds.push_back(4); /* KEEP */
         for (int d = 0; d < 4; d++) {
             if (fc != DIR_UNSET && d == dir_opposite(fc)) continue;
-            if (d == fc) continue;
+            // if (d == fc) continue; i guess this is a bug
             cmds.push_back(d);
         }
         return cmds;
