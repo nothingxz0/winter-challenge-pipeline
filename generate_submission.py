@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generate C++ submission for CodinGame from INT8 quantized weights.
-Uses zlib compression + ASCII85 encoding. Fixed 64×64 spatial resolution.
+Uses ASCII85 encoding. Fixed 64×64 spatial resolution.
 
 Usage:
     python generate_submission.py
@@ -11,7 +11,6 @@ Usage:
 import argparse
 import struct
 import sys
-import zlib
 from pathlib import Path
 
 import numpy as np
@@ -88,12 +87,8 @@ def generate_cpp(data):
 
     bias_bytes = np.concatenate(all_bias_f32).tobytes()
     total_blob = weight_bytes + bias_bytes
-    orig_blob_len = len(total_blob)
-    compressed_blob = zlib.compress(total_blob, level=9)
-    encoded, comp_len, table = encode_ascii85(compressed_blob)
-    print(f"Blob: {orig_blob_len} bytes "
-          f"-> {len(compressed_blob)} bytes (zlib, {100*len(compressed_blob)/orig_blob_len:.1f}%) "
-          f"-> {len(encoded)} chars (ascii85)")
+    encoded, orig_blob_len, table = encode_ascii85(total_blob)
+    print(f"Blob: {orig_blob_len} bytes -> {len(encoded)} chars (ascii85)")
 
     # Layer index maps
     w_idx = {name: i for i, (name, _, _, _) in enumerate(weight_layers)}
@@ -121,45 +116,6 @@ def generate_cpp(data):
     P.append('static void pB(Bot&b,const string&s){b.ln=0;const char*p=s.c_str();while(*p){int x=0,y=0;while(*p>=\'0\'&&*p<=\'9\')x=x*10+(*p++-\'0\');if(*p==\',\')p++;while(*p>=\'0\'&&*p<=\'9\')y=y*10+(*p++-\'0\');b.bx[b.ln]=x;b.by[b.ln]=y;b.ln++;if(*p==\':\')p++;}}\n')
     P.append('static inline bool iB(int x,int y){return(unsigned)x<(unsigned)W&&(unsigned)y<(unsigned)H;}\n')
 
-    # ---- Self-contained DEFLATE inflate (public domain, no -lz needed) ----
-    P.append(r"""
-static struct{const unsigned char*src;int bit;unsigned char buf;}gz;
-static unsigned gbits(int n){unsigned v=0;for(int i=0;i<n;i++){if(gz.bit==8){gz.buf=*gz.src++;gz.bit=0;}v|=((gz.buf>>gz.bit)&1)<<i;gz.bit++;}return v;}
-static unsigned grev(int n){unsigned v=0;for(int i=0;i<n;i++)v=(v<<1)|gbits(1);return v;}
-static void mktree(const int*lens,int n,int*ht,int*hc,int ml){
-  int cnt[17]={};for(int i=0;i<n;i++)if(lens[i])cnt[lens[i]]++;
-  int nc[17]={};int c=0;for(int i=1;i<=ml;i++){c=(c+cnt[i-1])<<1;nc[i]=c;}
-  for(int i=0;i<n;i++){int l=lens[i];if(!l)continue;
-    int cd=nc[l]++;int rv=0;for(int b=0;b<l;b++)rv=(rv<<1)|((cd>>b)&1);
-    for(int s=rv;s<(1<<ml);s+=(1<<l))ht[s]=i,hc[s]=l;}}
-static int decode(const int*ht,const int*hc,int ml){int v=grev(ml);return ht[v+(((1<<ml)-1-v)&~((1<<hc[v])-1))];}
-static void zinflate(const unsigned char*src,unsigned char*dst,int dlen){
-  gz.src=src+2;gz.bit=8;// skip zlib header
-  unsigned char*d=dst;
-  static int ht[32768],hc[32768],dt[512],dc[512];
-  static const int clen[]={16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15};
-  static const int blen[]={3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258};
-  static const int bext[]={0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0};
-  static const int dbase[]={1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577};
-  static const int dext[]={0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13};
-  for(;;){int bfinal=gbits(1),btype=gbits(2);
-    if(btype==0){gz.bit=8;int ln=*gz.src|(gz.src[1]<<8);gz.src+=4;memcpy(d,gz.src,ln);d+=ln;gz.src+=ln;}
-    else{int lml=7,dml=5;
-      if(btype==1){// fixed huffman
-        static int fht[128],fhc[128],fdt[32],fdc[32];static bool fi=false;
-        if(!fi){int fl[288];for(int i=0;i<144;i++)fl[i]=8;for(int i=144;i<256;i++)fl[i]=9;for(int i=256;i<280;i++)fl[i]=7;for(int i=280;i<288;i++)fl[i]=8;int dl[32];for(int i=0;i<32;i++)dl[i]=5;mktree(fl,288,fht,fhc,lml=9);mktree(dl,32,fdt,fdc,dml=5);fi=true;}
-        memcpy(ht,fht,sizeof(fht));memcpy(hc,fhc,sizeof(fhc));memcpy(dt,fdt,sizeof(fdt));memcpy(dc,fdc,sizeof(fdc));lml=9;}
-      else{// dynamic huffman
-        int hlit=gbits(5)+257,hdist=gbits(5)+1,hclen=gbits(4)+4;
-        int cl[19]={};for(int i=0;i<hclen;i++)cl[clen[i]]=gbits(3);
-        static int clt[128],clc[128];mktree(cl,19,clt,clc,7);
-        int ll[320]={};int i=0;while(i<hlit+hdist){int s=decode(clt,clc,7);if(s<16)ll[i++]=s;else if(s==16){int r=ll[i-1],n=gbits(2)+3;while(n--)ll[i++]=r;}else if(s==17){int n=gbits(3)+3;i+=n;}else{int n=gbits(7)+11;i+=n;}}
-        mktree(ll,hlit,ht,hc,lml=15);mktree(ll+hlit,hdist,dt,dc,dml=15);}
-      for(;;){int s=decode(ht,hc,lml);if(s<256)*d++=s;else if(s==256)break;else{s-=257;int ln=blen[s]+gbits(bext[s]);int ds=decode(dt,dc,dml);int dist=dbase[ds]+gbits(dext[ds]);unsigned char*back=d-dist;while(ln--)*d++=*back++;}}}
-    if(bfinal)break;}
-}
-""")
-
     # ---- Decode table ----
     decode_table = [0] * 128
     for i, ch in enumerate(table):
@@ -183,20 +139,15 @@ static void zinflate(const unsigned char*src,unsigned char*dst,int dlen){
     # ---- Weight storage ----
     # comp_len = size of the compressed (zlib) blob in bytes (padded to multiple of 4 by ascii85)
     # orig_blob_len = size of the uncompressed blob
-    comp_buf_size = ((len(compressed_blob) + 3) // 4) * 4  # ascii85 always decodes to multiple-of-4
+    raw_buf_size = ((orig_blob_len + 3) // 4) * 4  # ascii85 decodes to multiple of 4
     P.append(f'static float AW[{total_int8 + 10}],AB[{total_bias + 10}];\n')
     P.append(f'static float*Wp[{len(weight_layers)}],*Bp[{len(bias_layers)}];\n')
 
     # ---- Decode function ----
     P.append('static void decW(){\n')
-    # Step 1: ASCII85 decode into compressed buffer
-    P.append(f'static unsigned char cbuf[{comp_buf_size + 4}];\n')
+    P.append(f'static unsigned char r[{raw_buf_size + 4}];\n')
     P.append('const char*p=ED;int n=0;\n')
-    P.append('while(*p){unsigned v=0;for(int i=0;i<5;i++){v=v*85+D[(unsigned char)*p];p++;}cbuf[n++]=(v>>24)&0xFF;cbuf[n++]=(v>>16)&0xFF;cbuf[n++]=(v>>8)&0xFF;cbuf[n++]=v&0xFF;}\n')
-    # Step 2: zinflate into raw buffer (self-contained, no -lz needed)
-    P.append(f'static unsigned char r[{orig_blob_len + 4}];\n')
-    P.append(f'zinflate(cbuf,r,{orig_blob_len});\n')
-    # Step 3: unpack weights and biases from raw buffer (same as before)
+    P.append('while(*p){unsigned v=0;for(int i=0;i<5;i++){v=v*85+D[(unsigned char)*p];p++;}r[n++]=(v>>24)&0xFF;r[n++]=(v>>16)&0xFF;r[n++]=(v>>8)&0xFF;r[n++]=v&0xFF;}\n')
     P.append(f'for(int i=0;i<{total_int8};i++)AW[i]=((int)r[i]-128);\n')
     P.append(f'for(int i=0;i<{len(weight_layers)};i++){{Wp[i]=AW+WO[i];for(int j=0;j<WZ[i];j++)Wp[i][j]*=SC[i];}}\n')
     P.append(f'memcpy(AB,r+{bias_start},{total_bias * 4});\n')
