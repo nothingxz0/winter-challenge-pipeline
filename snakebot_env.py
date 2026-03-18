@@ -217,7 +217,7 @@ class SnakeBotEnv(gymnasium.Env):
         
         # A. The Apple Breadcrumbs (+0.2)
         apples_eaten = max(0, my_new_score - my_old_score)
-        step_reward = apples_eaten * 0.2
+        step_reward = apples_eaten * 1
 
         # B. The "Hot Stove" Stuck Penalty (-0.5)
         position_penalty = 0.0
