@@ -230,9 +230,16 @@ class SnakeBotEnv(gymnasium.Env):
 
     def _build_actions(self, action, player=0):
         """Convert MultiDiscrete action [d0, d1, d2, d3] to flat action list."""
+        # Loop over the ORIGINAL list to keep index 'i' aligned with the action array
+        bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
         alive_birds = self.get_alive_bird_ids(player=player)
         acts = []
-        for i, bid in enumerate(alive_birds):
+
+        for i, bid in enumerate(bird_ids):
+            # Skip sending actions for dead birds to prevent C++ Segfaults
+            if bid not in alive_birds:
+                continue
+
             if i < len(action):
                 d = int(action[i]) % 4
             else:
@@ -242,9 +249,12 @@ class SnakeBotEnv(gymnasium.Env):
 
     def _random_actions(self, player=1):
         """Random actions for a player's birds."""
+        bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
         alive_birds = self.get_alive_bird_ids(player=player)
         acts = []
-        for bid in alive_birds:
+        for bid in bird_ids:
+            if bid not in alive_birds:
+                continue
             acts.extend([bid, random.randint(0, 3)])
         return acts
 
@@ -252,20 +262,19 @@ class SnakeBotEnv(gymnasium.Env):
         """Terminal-only reward: +1 win, -1 loss, 0 draw."""
         if not terminal:
             return 0.0
+
         my_score = self.lib.engine_body_score(self.handle, 0)
         opp_score = self.lib.engine_body_score(self.handle, 1)
+
+        # You only get +1 if you ACTUALLY ate more apples than the opponent.
         if my_score > opp_score:
             return 1.0
         if my_score < opp_score:
             return -1.0
-        # Tiebreak: fewer losses wins
-        my_losses = self.lib.engine_get_losses(self.handle, 0)
-        opp_losses = self.lib.engine_get_losses(self.handle, 1)
-        if my_losses < opp_losses:
-            return 1.0
-        if my_losses > opp_losses:
-            return -1.0
-        return 0.0  # draw
+
+        # If the score is tied (including a 0-0 tie), nobody gets a win.
+        # This completely destroys the "just outlive the idiot" strategy.
+        return 0.0
 
     def get_alive_bird_ids(self, player=0):
         """Get list of alive bird IDs for a player."""
