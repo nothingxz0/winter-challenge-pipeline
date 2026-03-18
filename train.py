@@ -83,18 +83,9 @@ class SelfPlayCallback(BaseCallback):
         if win_rate >= self.update_threshold:
             should_update = True
             reason = f"win_rate {win_rate:.1%} >= {self.update_threshold:.1%}"
-        elif win_rate >= self.patience_threshold:
-            self.patience_count += 1
-            if self.patience_count >= self.patience_evals:
-                should_update = True
-                reason = f"patience: {self.patience_count} evals >= {self.patience_threshold:.1%}"
-        else:
-            self.patience_count = 0
 
         if should_update:
             self.opponent_version += 1
-            self.patience_count = 0
-
             # Save checkpoint
             ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
             self.model.save(str(ckpt_path))
@@ -214,14 +205,14 @@ def create_model(env, device="auto"):
             "net_arch": {"pi": [128, 128], "vf": [128, 128]},  # vf small since we don't export it
             "activation_fn": torch.nn.ReLU,
         },
-        learning_rate=1e-4,
+        learning_rate=2e-4,
         n_steps=n_steps,
         batch_size=dynamic_batch_size,
         n_epochs=4,  # pairs with 4 chunks
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.1,
+        ent_coef=0.07,
         vf_coef=0.5,
         max_grad_norm=0.5,
         device=device,

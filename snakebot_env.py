@@ -163,30 +163,29 @@ class SnakeBotEnv(gymnasium.Env):
             positions = {}
             n = self.lib.engine_bird_count(self.handle)
             bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
-
+            
             for i in range(n):
                 bid = ctypes.c_int()
                 owner = ctypes.c_int()
                 a = ctypes.c_int()
                 body = (ctypes.c_int * 400)()
                 blen = ctypes.c_int()
-
+                
                 self.lib.engine_get_bird(
                     self.handle, i,
                     ctypes.byref(bid), ctypes.byref(owner),
                     ctypes.byref(a), body, ctypes.byref(blen)
                 )
-
+                
                 # If the bird belongs to the player and is alive, body[0] and body[1] are the head x,y
                 if bid.value in bird_ids and a.value:
                     positions[bid.value] = (body[0], body[1])
-
+                    
             return positions
     def step(self, action):
-        # 1. Capture head positions BEFORE the move
-        prev_positions = self._get_head_positions(player=0)
         # Build my actions
         my_actions = self._build_actions(action, player=0)
+
         # Opponent actions
         if self.opponent is not None:
             opp_obs = self._get_obs(viewer=1)
@@ -194,27 +193,19 @@ class SnakeBotEnv(gymnasium.Env):
             opp_actions = self._build_actions(opp_act, player=1)
         else:
             opp_actions = self._random_actions(player=1)
-        # Merge all actions and step the C++ engine
+
+        # Merge all actions
         all_acts = my_actions + opp_actions
         n = len(all_acts) // 2
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n)
-        # 2. Capture head positions AFTER the move
-        curr_positions = self._get_head_positions(player=0)
-        # 3. Apply the User's Position Penalty (-0.5 for getting stuck)
-        position_penalty = 0.0
-        for bid, prev_pos in prev_positions.items():
-            if bid in curr_positions:  # If the bird is still alive
-                if prev_pos == curr_positions[bid]:
-                    position_penalty -= 0.5  # Punish standing still
-        # Calculate final reward
+
         obs = self._get_obs(viewer=0)
-        terminal_reward = self._compute_reward(bool(terminal))
-        # Combine the terminal reward with the stuck penalty
-        total_reward = terminal_reward + position_penalty
+        reward = self._compute_reward(bool(terminal))
         terminated = bool(terminal)
         truncated = False
-        return obs, total_reward, terminated, truncated, {}
+
+        return obs, reward, terminated, truncated, {}
 
     def close(self):
         if self.handle is not None:
