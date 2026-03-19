@@ -458,8 +458,12 @@ class SnakeBotEnv(gymnasium.Env):
         opp_score = self.lib.engine_body_score(self.handle, 1)
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
-        if my_score > opp_score and my_score > self.starting_score:
-            return 1.0
+        if my_score > opp_score:
+            if self.strict_win:
+                if my_score > self.starting_score:
+                    return 1.0
+                else:
+                    return -0.1
         if my_score < opp_score:
             return -1.0
 
