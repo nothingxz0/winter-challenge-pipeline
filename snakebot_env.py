@@ -272,7 +272,7 @@ class SnakeBotEnv(gymnasium.Env):
         
         # A. High Apple Reward (+0.25) - Make them hunt!
         apples_eaten = max(0, my_new_score - my_old_score)
-        apple_reward = apples_eaten * 0.3
+        apple_reward = apples_eaten * 0.5
 
         # B. AGGRESSIVE Stall Penalty
         # We remove the 3-turn grace period. If you don't move, you pay.
@@ -282,7 +282,7 @@ class SnakeBotEnv(gymnasium.Env):
                 if prev_pos == curr_positions[bid]:
                     self.stall_counts[bid] = self.stall_counts.get(bid, 0) + 1
                     # Immediate punishment starting at -0.2
-                    stall_penalty -= 0.7 * self.stall_counts[bid]
+                    stall_penalty -= 0.6 * self.stall_counts[bid]
                 else:
                     self.stall_counts[bid] = 0
             else:
