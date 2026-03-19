@@ -877,10 +877,11 @@ private:
             moved = true;
             for (size_t idx : group) {
                 shift_bird_down(idx);
-                /* Note: Rust checks head().y >= height (not height+1) for intercoiled */
-                if (birds[idx].head().y >= grid.height) {
-                    birds[idx].alive = false;
+                bool all_below = true;
+                for (auto& c : birds[idx].body) {
+                    if (c.y < grid.height + 1) { all_below = false; break; }
                 }
+                if (all_below) birds[idx].alive = false;
             }
         }
         return moved;
@@ -953,7 +954,7 @@ private:
     static bool birds_touching(const BirdState& a, const BirdState& b) {
         for (auto& ac : a.body) {
             for (auto& bc : b.body) {
-                if (ac.manhattan_to(bc) == 1) return true;
+                if (ac.manhattan_to(bc) == 1 && ac.x == bc.x) return true;
             }
         }
         return false;
