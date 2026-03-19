@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import gymnasium
 import os
 import sys
 import time
@@ -132,27 +133,11 @@ class SelfPlayCallback(BaseCallback):
         return wins / total
 
     def _update_opponent(self):
-        """Update the opponent policy in training environments."""
-        # Load the latest checkpoint as the opponent
-        ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
-        opponent_model = MaskablePPO.load(str(ckpt_path), device="cpu")
-
-        def make_opponent(obs, masks):
-            action, _ = opponent_model.predict(obs, deterministic=True, action_masks=masks)
-            return action
-
-        # Update opponent in all vectorized environments
-        for env_idx in range(self.training_env.num_envs):
-            env = self.training_env.envs[env_idx]
-            # Navigate through Monitor wrapper if present
-            while hasattr(env, 'env'):
-                if hasattr(env, 'opponent'):
-                    env.opponent = make_opponent
-                    break
-                env = env.env
-            else:
-                if hasattr(env, 'opponent'):
-                    env.opponent = make_opponent
+        """Broadcast the new opponent file path to all isolated subprocesses."""
+        ckpt_path = str(Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip")
+        
+        # env_method automatically finds the SelfPlayWrapper in all 16 workers and executes the function!
+        self.training_env.env_method("load_opponent_from_path", ckpt_path)
 
 
 class PeriodicCheckpoint(BaseCallback):
@@ -172,6 +157,23 @@ class PeriodicCheckpoint(BaseCallback):
         return True
 
 
+class SelfPlayWrapper(gymnasium.Wrapper):
+    """A wrapper that lives inside the isolated subprocess to safely load opponents."""
+    def __init__(self, env):
+        super().__init__(env)
+        self.opponent_model = None
+
+    def load_opponent_from_path(self, path):
+        # Load the model strictly on CPU inside this specific subprocess
+        self.opponent_model = MaskablePPO.load(path, device="cpu")
+        
+        def make_opponent(obs, masks):
+            action, _ = self.opponent_model.predict(obs, deterministic=True, action_masks=masks)
+            return action
+            
+        self.env.unwrapped.opponent = make_opponent
+
+
 def mask_fn(env):
     """Get action masks from the environment (unwrap if needed)."""
     while hasattr(env, 'env'):
@@ -183,6 +185,7 @@ def make_env(seed_offset=0, league=4, max_turns=200, opponent=None):
     """Create a monitored environment with action masking."""
     def _init():
         env = SnakeBotEnv(league=league, max_turns=max_turns, opponent=opponent)
+        env = SelfPlayWrapper(env)
         env = Monitor(env)
         env = ActionMasker(env, mask_fn)  # ActionMasker last so it's visible
         return env
@@ -263,7 +266,7 @@ def train(args):
 
     remaining_steps = args.total_steps - args.warmup_steps
 
-    envs = DummyVecEnv([make_env(seed_offset=i, league=args.league)
+    envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
                         for i in range(n_envs)])
 
     if warmup_path and warmup_path.exists():
@@ -275,7 +278,7 @@ def train(args):
     # Save initial opponent
     opp_path = CHECKPOINT_DIR / "opponent_v0.zip"
     model.save(str(opp_path))
-
+    envs.env_method("load_opponent_from_path", str(opp_path))
     callbacks = [
         SelfPlayCallback(
             eval_freq=args.eval_freq,
