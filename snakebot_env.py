@@ -152,6 +152,10 @@ class SnakeBotEnv(gymnasium.Env):
         self._my_bird_ids = []
         self._opp_bird_ids = []
 
+        # Occupied coordinates cache for performance
+        self._occupied_coords_cache = None
+        self._occupied_coords_turn = -1
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         game_seed = seed if seed is not None else random.randint(0, 999999)
@@ -160,6 +164,8 @@ class SnakeBotEnv(gymnasium.Env):
         self._cache_bird_ids()
         self.stall_counts = {} # Clear counts for the new game
         self.starting_score = self.lib.engine_body_score(self.handle, 0)
+        # Invalidate occupied coords cache
+        self._occupied_coords_turn = -1
         obs = self._get_obs(viewer=0)
         return obs, {}
 
@@ -312,8 +318,8 @@ class SnakeBotEnv(gymnasium.Env):
         # Opponent actions (KEEPING THE MASK FIX!)
         if self.opponent is not None:
             opp_obs = self._get_obs(viewer=1)
-            opp_masks = self.action_masks(player=1) 
-            opp_act = self.opponent(opp_obs, opp_masks) 
+            opp_masks = self.action_masks(player=1)
+            opp_act = self.opponent(opp_obs, opp_masks)
             opp_actions = self._build_actions(opp_act, player=1)
         else:
             opp_actions = self._random_actions(player=1)
@@ -324,10 +330,13 @@ class SnakeBotEnv(gymnasium.Env):
         arr = (ctypes.c_int * len(all_acts))(*all_acts)
         terminal = self.lib.engine_step(self.handle, arr, n)
 
+        # Invalidate occupied coords cache after step
+        self._occupied_coords_turn = -1
+
         # Pure terminal reward calculation
         obs = self._get_obs(viewer=0)
         reward = self._compute_reward(bool(terminal))
-        
+
         terminated = bool(terminal)
         truncated = False
 
@@ -459,11 +468,7 @@ class SnakeBotEnv(gymnasium.Env):
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
         if my_score > opp_score:
-            if self.strict_win:
-                if my_score > self.starting_score:
-                    return 1.0
-                else:
-                    return -0.1
+            return 1.0
         if my_score < opp_score:
             return -1.0
 
@@ -489,14 +494,43 @@ class SnakeBotEnv(gymnasium.Env):
                 alive.append(bid.value)
         return alive
 
+    def _compute_occupied_coords(self):
+        """Compute all occupied body coordinates for collision detection.
+
+        This is expensive, so we cache it per turn.
+        """
+        occupied_coords = set()
+        total_birds = self.lib.engine_bird_count(self.handle)
+
+        for j in range(total_birds):
+            b_id = ctypes.c_int()
+            b_own = ctypes.c_int()
+            b_alive = ctypes.c_int()
+            b_len = ctypes.c_int()
+            b_body = (ctypes.c_int * 400)()
+
+            self.lib.engine_get_bird(
+                self.handle, j,
+                ctypes.byref(b_id), ctypes.byref(b_own), ctypes.byref(b_alive),
+                b_body, ctypes.byref(b_len)
+            )
+
+            if b_alive.value == 1:
+                # Add every single body segment to our obstacle list
+                for k in range(b_len.value):
+                    ox, oy = b_body[k * 2], b_body[k * 2 + 1]
+                    occupied_coords.add((ox, oy))
+
+        return occupied_coords
+
     def action_masks(self, player=0):
         # Support both players
         mask = np.zeros(16, dtype=bool)
         legal_arr = (ctypes.c_int * 5)()
-        
+
         alive_birds = self.get_alive_bird_ids(player=player)
         bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
-        
+
         # We need the current head positions to predict the next step!
         head_positions = self._get_head_positions(player=player)
 
@@ -504,29 +538,12 @@ class SnakeBotEnv(gymnasium.Env):
         W = self.lib.engine_get_width(self.handle)
         H = self.lib.engine_get_height(self.handle)
 
-        # === NEW CODE: GATHER ALL OCCUPIED BODY COORDINATES ===
-        occupied_coords = set()
-        total_birds = self.lib.engine_bird_count(self.handle)
-        
-        for j in range(total_birds):
-            b_id = ctypes.c_int()
-            b_own = ctypes.c_int()
-            b_alive = ctypes.c_int()
-            b_len = ctypes.c_int()
-            b_body = (ctypes.c_int * 400)()
-            
-            self.lib.engine_get_bird(
-                self.handle, j, 
-                ctypes.byref(b_id), ctypes.byref(b_own), ctypes.byref(b_alive),
-                b_body, ctypes.byref(b_len)
-            )
-            
-            if b_alive.value == 1:
-                # Add every single body segment to our obstacle list
-                for k in range(b_len.value):
-                    ox, oy = b_body[k * 2], b_body[k * 2 + 1]
-                    occupied_coords.add((ox, oy))
-        # ======================================================
+        # Use cached occupied coordinates (performance optimization)
+        current_turn = self.lib.engine_get_turn(self.handle)
+        if self._occupied_coords_turn != current_turn:
+            self._occupied_coords_cache = self._compute_occupied_coords()
+            self._occupied_coords_turn = current_turn
+        occupied_coords = self._occupied_coords_cache
 
         for i, bid in enumerate(bird_ids):
             if i < 4:

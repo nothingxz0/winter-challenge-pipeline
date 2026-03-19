@@ -108,12 +108,17 @@ class SelfPlayCallback(BaseCallback):
         return True
 
     def _evaluate(self):
-        """Evaluate current model vs frozen opponent."""
+        """Evaluate current model vs frozen opponent.
+
+        Plays half games as P0 (we move first) and half as P1 (opponent moves first).
+        This ensures fair evaluation regardless of any P0/P1 advantage in map generation.
+        """
         wins = 0
         total = self.n_eval_games
 
         # 1. Load the actual frozen opponent for the test!
         ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
+        eval_opp_model = None
         if ckpt_path.exists():
             eval_opp_model = MaskablePPO.load(str(ckpt_path), device="cpu")
             def make_eval_opponent(obs, masks):
@@ -122,23 +127,56 @@ class SelfPlayCallback(BaseCallback):
         else:
             make_eval_opponent = None
 
-        # 2. Pass the opponent into the environment
-        env = SnakeBotEnv(league=4, max_turns=200, opponent=make_eval_opponent)
-
+        # 2. Play half games as P0, half as P1
         for game_idx in range(total):
             we_are_p0 = (game_idx % 2 == 0)
+
+            # Create environment with roles swapped for P1 games
+            if we_are_p0:
+                # We are P0 (normal): we control player 0, opponent controls player 1
+                env = SnakeBotEnv(league=4, max_turns=200, opponent=make_eval_opponent)
+            else:
+                # We are P1 (swapped): opponent controls player 0, we control player 1
+                # So we create an env where the "opponent" is our model and we act as opponent
+                def make_self_opponent(obs, masks):
+                    action, _ = self.model.predict(obs, deterministic=True, action_masks=masks)
+                    return action
+                env = SnakeBotEnv(league=4, max_turns=200, opponent=make_self_opponent)
+
             obs, _ = env.reset(seed=10000 + game_idx)
             terminated = False
 
             while not terminated:
                 action_masks = env.action_masks()
-                action, _ = self.model.predict(obs, deterministic=True, action_masks=action_masks)
+
+                if we_are_p0:
+                    # Normal: we control the env's player
+                    action, _ = self.model.predict(obs, deterministic=True, action_masks=action_masks)
+                else:
+                    # Swapped: we play as opponent, frozen model controls env's player
+                    action, _ = eval_opp_model.predict(obs, deterministic=True, action_masks=action_masks) if eval_opp_model else (env.action_space.sample(), None)
+
                 obs, reward, terminated, _, _ = env.step(action)
 
-            if reward > 0:
-                wins += 1
+            # Count wins correctly based on role
+            if we_are_p0:
+                # Normal: positive reward = we won
+                if reward > 0:
+                    wins += 1
+            else:
+                # Swapped: negative reward = opponent (actually us) lost, so frozen model won
+                # We want positive when WE win, so invert
+                if reward < 0:  # Opponent lost = we won
+                    wins += 1
 
-        env.close()
+            env.close()
+
+        # 3. Clean up loaded model to prevent memory leak
+        if eval_opp_model is not None:
+            del eval_opp_model
+            import gc
+            gc.collect()
+
         return wins / total
 
     def _update_opponent(self):
@@ -204,7 +242,7 @@ def make_env(seed_offset=0, league=4, max_turns=200, opponent=None, strict_win=F
 def create_model(env, device="auto"):
     """Create MaskablePPO model with CompactUNetExtractor."""
     # Dynamic batch size: divide total buffer into 4 chunks
-    n_steps = 1024
+    n_steps = 512  # Reduced from 1024 for faster GPU updates
     total_states = n_steps * env.num_envs
     dynamic_batch_size = total_states // 4  # 4 chunks
 
@@ -216,7 +254,7 @@ def create_model(env, device="auto"):
         policy_kwargs={
             "features_extractor_class": CompactUNetExtractor,
             "features_extractor_kwargs": {"features_dim": 128},
-            "net_arch": {"pi": [128, 128], "vf": [128, 128]},  # vf small since we don't export it
+            "net_arch": {"pi": [128], "vf": [64]},  # Keep policy capacity, slim value head
             "activation_fn": torch.nn.ReLU,
         },
         learning_rate=2e-4,
@@ -245,13 +283,13 @@ def train(args):
     print(f"Training config: {n_envs} envs, device={device}")
     print(f"Total steps: {args.total_steps:,}, warmup: {args.warmup_steps:,}")
 
-    # Phase 1: Warmup vs random opponent
+    # Phase 1: Warmup vs random opponent (League 2 - Silver)
     if args.warmup_steps > 0:
         print("\n" + "=" * 60)
-        print("Phase 1: Warmup vs random opponent")
+        print("Phase 1: Warmup vs random opponent (League 2 - Silver)")
         print("=" * 60)
 
-        envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league, strict_win=True)
+        envs = SubprocVecEnv([make_env(seed_offset=i, league=2, strict_win=True)
                     for i in range(n_envs)])
         model = create_model(envs, device=device)
 
@@ -268,14 +306,14 @@ def train(args):
     else:
         warmup_path = None
 
-    # Phase 2: Self-play
+    # Phase 2: Self-play (League 4 - Legend)
     print("\n" + "=" * 60)
-    print("Phase 2: Self-play training")
+    print("Phase 2: Self-play training (League 4 - Legend)")
     print("=" * 60)
 
     remaining_steps = args.total_steps - args.warmup_steps
 
-    envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league, strict_win=False)
+    envs = SubprocVecEnv([make_env(seed_offset=i, league=4, strict_win=True)
                         for i in range(n_envs)])
 
     if warmup_path and warmup_path.exists():
@@ -319,8 +357,8 @@ def main():
                         help="Total training timesteps (default: 1M)")
     parser.add_argument("--warmup-steps", type=int, default=50_000,
                         help="Warmup steps vs random (default: 50K)")
-    parser.add_argument("--n-envs", type=int, default=4,
-                        help="Number of parallel environments (default: 4)")
+    parser.add_argument("--n-envs", type=int, default=16,
+                        help="Number of parallel environments (default: 16)")
     parser.add_argument("--league", type=int, default=4,
                         help="Game league level (default: 4)")
     parser.add_argument("--eval-freq", type=int, default=20_000,

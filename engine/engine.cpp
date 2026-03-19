@@ -433,6 +433,32 @@ struct GridMaker {
             }
         }
 
+        /* Fallback apple generation if too few apples */
+        if (grid.apples.size() < 8) {
+            grid.apples.clear();
+            std::vector<Coord> free_tiles;
+            for (auto& c : all_coords) {
+                if (grid.get(c) == TILE_EMPTY) {
+                    free_tiles.push_back(c);
+                }
+            }
+            random.shuffle(free_tiles);
+
+            int min_apple_coords = std::max(4, static_cast<int>(0.025 * free_tiles.size()));
+            while (static_cast<int>(grid.apples.size()) < min_apple_coords * 2 && !free_tiles.empty()) {
+                Coord c = free_tiles.back();
+                free_tiles.pop_back();
+                grid.apples.push_back(c);
+                Coord opp = grid.opposite(c);
+                grid.apples.push_back(opp);
+                /* Remove opposite from free_tiles */
+                free_tiles.erase(
+                    std::remove_if(free_tiles.begin(), free_tiles.end(),
+                        [&](Coord fc) { return fc == opp; }),
+                    free_tiles.end());
+            }
+        }
+
         /* Convert isolated wall blocks to apples */
         for (auto& c : all_coords) {
             if (grid.get(c) != TILE_WALL) continue;
@@ -954,7 +980,7 @@ private:
     static bool birds_touching(const BirdState& a, const BirdState& b) {
         for (auto& ac : a.body) {
             for (auto& bc : b.body) {
-                if (ac.manhattan_to(bc) == 1 && ac.x == bc.x) return true;
+                if (ac.manhattan_to(bc) == 1) return true;
             }
         }
         return false;
@@ -983,6 +1009,18 @@ static GameState initial_state_from_seed(int64_t seed, int league) {
                 }
             }
             state.add_bird(next_bird_id, owner, body, DIR_UNSET);
+
+            /* Clear walls if spawn head is enclosed (matching Java Game.java lines 69-77) */
+            if (!body.empty()) {
+                Coord head = body[0];
+                Coord left = head.add(-1, 0);
+                Coord right = head.add(1, 0);
+                if (state.grid.get(left) == TILE_WALL && state.grid.get(right) == TILE_WALL) {
+                    state.grid.set(left, TILE_EMPTY);
+                    state.grid.set(state.grid.opposite(left), TILE_EMPTY);
+                }
+            }
+
             next_bird_id++;
         }
     }
