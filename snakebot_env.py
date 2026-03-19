@@ -127,7 +127,7 @@ class SnakeBotEnv(gymnasium.Env):
 
     metadata = {"render_modes": ["ansi"]}
 
-    def __init__(self, league=4, max_turns=200, opponent=None, render_mode=None):
+    def __init__(self, league=4, max_turns=200, opponent=None, render_mode=None, strict_win=False):
         super().__init__()
 
         self.lib = _get_lib()
@@ -137,6 +137,8 @@ class SnakeBotEnv(gymnasium.Env):
         self.opponent = opponent  # callable: obs → action array, or None (random)
         self.render_mode = render_mode
         self.stall_counts = {} # Track consecutive turns at same (x, y)
+        self.strict_win = strict_win
+        self.starting_score = 0
 
         # Fixed 64×64 padded observation
         self.observation_space = spaces.Box(
@@ -157,6 +159,7 @@ class SnakeBotEnv(gymnasium.Env):
         self.lib.engine_set_max_turns(self.handle, self.max_turns)
         self._cache_bird_ids()
         self.stall_counts = {} # Clear counts for the new game
+        self.starting_score = self.lib.engine_body_score(self.handle, 0)
         obs = self._get_obs(viewer=0)
         return obs, {}
 
@@ -241,72 +244,15 @@ class SnakeBotEnv(gymnasium.Env):
 
     #     return obs, total_reward, terminated, truncated, {}
     
-    def step(self, action):
-        # 1. Capture State BEFORE
-        my_old_score = self.lib.engine_body_score(self.handle, 0)
-        prev_positions = self._get_head_positions(player=0)
-        
-        # 2. Build actions
-        my_actions = self._build_actions(action, player=0)
-
-        # 3. Handle Opponent (Masking Fix)
-        if self.opponent is not None:
-            opp_obs = self._get_obs(viewer=1)
-            opp_masks = self.action_masks(player=1) 
-            opp_act = self.opponent(opp_obs, opp_masks) 
-            opp_actions = self._build_actions(opp_act, player=1)
-        else:
-            opp_actions = self._random_actions(player=1)
-
-        # 4. Step Engine
-        all_acts = my_actions + opp_actions
-        n = len(all_acts) // 2
-        arr = (ctypes.c_int * len(all_acts))(*all_acts)
-        terminal = self.lib.engine_step(self.handle, arr, n)
-
-        # 5. Capture State AFTER
-        my_new_score = self.lib.engine_body_score(self.handle, 0)
-        curr_positions = self._get_head_positions(player=0)
-
-        # 6. CALCULATE REWARDS
-        
-        # A. High Apple Reward (+0.25) - Make them hunt!
-        apples_eaten = max(0, my_new_score - my_old_score)
-        apple_reward = apples_eaten * 0.5
-
-        # B. AGGRESSIVE Stall Penalty
-        # We remove the 3-turn grace period. If you don't move, you pay.
-        stall_penalty = 0.0
-        for bid, prev_pos in prev_positions.items():
-            if bid in curr_positions:
-                if prev_pos == curr_positions[bid]:
-                    self.stall_counts[bid] = self.stall_counts.get(bid, 0) + 1
-                    # Immediate punishment starting at -0.2
-                    stall_penalty -= 0.6 * self.stall_counts[bid]
-                else:
-                    self.stall_counts[bid] = 0
-            else:
-                self.stall_counts.pop(bid, None)
-
-        # 7. APPLY HARD CAP
-        # We removed height/lead rewards to keep the signal pure
-        shaped_step_total = apple_reward + stall_penalty
-        clamped_shaped_reward = max(-0.5, min(0.5, shaped_step_total))
-
-        # 8. Final Reward
-        obs = self._get_obs(viewer=0)
-        terminal_reward = self._compute_reward(bool(terminal))
-        
-        total_reward = terminal_reward + clamped_shaped_reward
-
-        return obs, total_reward, bool(terminal), False, {}
-
-
     # def step(self, action):
-    #     # Build my actions
+    #     # 1. Capture State BEFORE
+    #     my_old_score = self.lib.engine_body_score(self.handle, 0)
+    #     prev_positions = self._get_head_positions(player=0)
+        
+    #     # 2. Build actions
     #     my_actions = self._build_actions(action, player=0)
 
-    #     # Opponent actions (KEEPING THE MASK FIX!)
+    #     # 3. Handle Opponent (Masking Fix)
     #     if self.opponent is not None:
     #         opp_obs = self._get_obs(viewer=1)
     #         opp_masks = self.action_masks(player=1) 
@@ -315,20 +261,77 @@ class SnakeBotEnv(gymnasium.Env):
     #     else:
     #         opp_actions = self._random_actions(player=1)
 
-    #     # Merge all actions and step the C++ engine
+    #     # 4. Step Engine
     #     all_acts = my_actions + opp_actions
     #     n = len(all_acts) // 2
     #     arr = (ctypes.c_int * len(all_acts))(*all_acts)
     #     terminal = self.lib.engine_step(self.handle, arr, n)
 
-    #     # Pure terminal reward calculation
-    #     obs = self._get_obs(viewer=0)
-    #     reward = self._compute_reward(bool(terminal))
-        
-    #     terminated = bool(terminal)
-    #     truncated = False
+    #     # 5. Capture State AFTER
+    #     my_new_score = self.lib.engine_body_score(self.handle, 0)
+    #     curr_positions = self._get_head_positions(player=0)
 
-    #     return obs, reward, terminated, truncated, {}
+    #     # 6. CALCULATE REWARDS
+        
+    #     # A. High Apple Reward (+0.25) - Make them hunt!
+    #     apples_eaten = max(0, my_new_score - my_old_score)
+    #     apple_reward = apples_eaten * 0.5
+
+    #     # B. AGGRESSIVE Stall Penalty
+    #     # We remove the 3-turn grace period. If you don't move, you pay.
+    #     stall_penalty = 0.0
+    #     for bid, prev_pos in prev_positions.items():
+    #         if bid in curr_positions:
+    #             if prev_pos == curr_positions[bid]:
+    #                 self.stall_counts[bid] = self.stall_counts.get(bid, 0) + 1
+    #                 # Immediate punishment starting at -0.2
+    #                 stall_penalty -= 0.2 * self.stall_counts[bid]
+    #             else:
+    #                 self.stall_counts[bid] = 0
+    #         else:
+    #             self.stall_counts.pop(bid, None)
+
+    #     # 7. APPLY HARD CAP
+    #     # We removed height/lead rewards to keep the signal pure
+    #     shaped_step_total = apple_reward + stall_penalty
+    #     clamped_shaped_reward = max(-0.5, min(0.5, shaped_step_total))
+
+    #     # 8. Final Reward
+    #     obs = self._get_obs(viewer=0)
+    #     terminal_reward = self._compute_reward(bool(terminal))
+        
+    #     total_reward = terminal_reward + clamped_shaped_reward
+
+    #     return obs, total_reward, bool(terminal), False, {}
+
+
+    def step(self, action):
+        # Build my actions
+        my_actions = self._build_actions(action, player=0)
+
+        # Opponent actions (KEEPING THE MASK FIX!)
+        if self.opponent is not None:
+            opp_obs = self._get_obs(viewer=1)
+            opp_masks = self.action_masks(player=1) 
+            opp_act = self.opponent(opp_obs, opp_masks) 
+            opp_actions = self._build_actions(opp_act, player=1)
+        else:
+            opp_actions = self._random_actions(player=1)
+
+        # Merge all actions and step the C++ engine
+        all_acts = my_actions + opp_actions
+        n = len(all_acts) // 2
+        arr = (ctypes.c_int * len(all_acts))(*all_acts)
+        terminal = self.lib.engine_step(self.handle, arr, n)
+
+        # Pure terminal reward calculation
+        obs = self._get_obs(viewer=0)
+        reward = self._compute_reward(bool(terminal))
+        
+        terminated = bool(terminal)
+        truncated = False
+
+        return obs, reward, terminated, truncated, {}
 
     # def step(self, action):
     #     # Build my actions
@@ -440,7 +443,13 @@ class SnakeBotEnv(gymnasium.Env):
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
         if my_score > opp_score:
-            return 1.0
+            if self.strict_win:
+                if my_score > self.starting_score:
+                    return 1.0
+                else:
+                    return 0.0
+            else:
+                return 1.0
         if my_score < opp_score:
             return -1.0
 

@@ -190,10 +190,10 @@ def mask_fn(env):
     return env.action_masks()
 
 
-def make_env(seed_offset=0, league=4, max_turns=200, opponent=None):
+def make_env(seed_offset=0, league=4, max_turns=200, opponent=None, strict_win=False):
     """Create a monitored environment with action masking."""
     def _init():
-        env = SnakeBotEnv(league=league, max_turns=max_turns, opponent=opponent)
+        env = SnakeBotEnv(league=league, max_turns=max_turns, opponent=opponent, strict_win=strict_win)
         env = SelfPlayWrapper(env)
         env = Monitor(env)
         env = ActionMasker(env, mask_fn)  # ActionMasker last so it's visible
@@ -226,7 +226,7 @@ def create_model(env, device="auto"):
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.04,
+        ent_coef=0.06,
         vf_coef=0.5,
         max_grad_norm=0.5,
         device=device,
@@ -251,7 +251,7 @@ def train(args):
         print("Phase 1: Warmup vs random opponent")
         print("=" * 60)
 
-        envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
+        envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league, strict_win=True)
                     for i in range(n_envs)])
         model = create_model(envs, device=device)
 
@@ -275,7 +275,7 @@ def train(args):
 
     remaining_steps = args.total_steps - args.warmup_steps
 
-    envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league)
+    envs = SubprocVecEnv([make_env(seed_offset=i, league=args.league, strict_win=False)
                         for i in range(n_envs)])
 
     if warmup_path and warmup_path.exists():
