@@ -103,6 +103,7 @@ def generate_cpp(data):
     P = []
 
     # ---- Headers ----
+    # ---- Headers ----
     P.append('#pragma GCC optimize("O3,inline,omit-frame-pointer,unroll-loops")\n')
     P.append('#pragma GCC target("avx2,bmi,bmi2,lzcnt,popcnt")\n')
     P.append('#include<iostream>\n#include<string>\n#include <stdint.h>\n#include<cstring>\n#include<cmath>\n#include<algorithm>\nusing namespace std;\n')
@@ -110,11 +111,13 @@ def generate_cpp(data):
     P.append('static const char*DN[4]={"UP","RIGHT","DOWN","LEFT"};\n')
     P.append('static int W,H,myId,nA,aX[2000],aY[2000],nB;\n')
     P.append('static bool wG[4096],mB[1024];\n')
+    P.append('static int my_bird_ids[4], n_my_birds = 0;\n')  # NEW: Track bird identities
     P.append('struct Bot{int id,ow,bx[200],by[200],ln;\n')
     P.append('int hx()const{return bx[0];}int hy()const{return by[0];}')
     P.append('int fc()const{if(ln<2)return-1;int dx=bx[0]-bx[1],dy=by[0]-by[1];for(int d=0;d<4;d++)if(DX[d]==dx&&DY[d]==dy)return d;return-1;}};\n')
     P.append('static Bot bt[16];\n')
-    P.append('static void pB(Bot&b,const string&s){b.ln=0;const char*p=s.c_str();while(*p){int x=0,y=0;while(*p>=\'0\'&&*p<=\'9\')x=x*10+(*p++-\'0\');if(*p==\',\')p++;while(*p>=\'0\'&&*p<=\'9\')y=y*10+(*p++-\'0\');b.bx[b.ln]=x;b.by[b.ln]=y;b.ln++;if(*p==\':\')p++;}}\n')
+    # NEW: Safe parser that ignores "DEAD" strings and handles negative coordinates
+    P.append('static void pB(Bot&b,const string&s){b.ln=0;if(s.find("DEAD")!=string::npos)return;const char*p=s.c_str();while(*p){int x=0,y=0,sx=1,sy=1;if(*p==\'-\'){sx=-1;p++;}while(*p>=\'0\'&&*p<=\'9\')x=x*10+(*p++-\'0\');x*=sx;if(*p==\',\')p++;if(*p==\'-\'){sy=-1;p++;}while(*p>=\'0\'&&*p<=\'9\')y=y*10+(*p++-\'0\');y*=sy;b.bx[b.ln]=x;b.by[b.ln]=y;b.ln++;if(*p==\':\')p++;else if(*p)p++;}}\n')
     # ---- Decode table ----
     decode_table = [0] * 128
     for i, ch in enumerate(table):
@@ -251,17 +254,25 @@ def generate_cpp(data):
     P.append('cin>>myId;cin.ignore();cin>>W;cin.ignore();cin>>H;cin.ignore();\n')
     P.append('for(int y=0;y<H;y++){string r;getline(cin,r);for(int x=0;x<W;x++)wG[y*W+x]=(r[x]==\'#\');}\n')
     P.append('int bp;cin>>bp;cin.ignore();\n')
-    P.append('for(int i=0;i<bp;i++){int id;cin>>id;cin.ignore();mB[id]=true;}\n')
+    
+    # NEW: Lock in initial IDs during startup
+    P.append('for(int i=0;i<bp;i++){int id;cin>>id;cin.ignore();mB[id]=true;my_bird_ids[n_my_birds++]=id;}\n')
+    
     P.append('for(int i=0;i<bp;i++){int id;cin>>id;cin.ignore();}\n')
     P.append('while(true){cin>>nA;cin.ignore();if(cin.eof())break;\n')
     P.append('for(int i=0;i<nA;i++){cin>>aX[i]>>aY[i];cin.ignore();}\n')
     P.append('cin>>nB;cin.ignore();for(int i=0;i<nB;i++){string bd;cin>>bt[i].id>>bd;cin.ignore();pB(bt[i],bd);bt[i].ow=mB[bt[i].id]?0:1;}\n')
     P.append('exO();fwd();\n')
-    P.append('int mi[4],nm=0;for(int i=0;i<nB;i++)if(mB[bt[i].id])mi[nm++]=i;bool fr=true;\n')
-
     
-    P.append('for(int bi=0;bi<nm;bi++){Bot&bot=bt[mi[bi]];float*lg=al+bi*4;int bd=-1,fc=bot.fc();if(fc!=-1)bd=(fc+2)%4;\n')
-    P.append('int hx=bot.hx(),hy=bot.hy();auto is_fatal=[&](int d){int nx=hx+DX[d],ny=hy+DY[d];if(nx<0||nx>=W||ny>=H||(ny>=0&&wG[ny*W+nx]))return true;for(int b=0;b<nB;b++)for(int j=0;j<bt[b].ln;j++)if(bt[b].bx[j]==nx&&bt[b].by[j]==ny)return true;return false;};\n')
+    # NEW: Only queue alive birds to prevent crashes
+    P.append('int mi[4],nm=0;for(int i=0;i<nB;i++)if(mB[bt[i].id]&&bt[i].ln>0)mi[nm++]=i;bool fr=true;\n')
+
+    # NEW: The Brain-Swap fix (matches nn_idx to initial ID)
+    P.append('for(int bi=0;bi<nm;bi++){Bot&bot=bt[mi[bi]];int nn_idx=0;for(int j=0;j<n_my_birds;j++){if(my_bird_ids[j]==bot.id){nn_idx=j;break;}}float*lg=al+nn_idx*4;int bd=-1,fc=bot.fc();if(fc!=-1)bd=(fc+2)%4;\n')
+    
+    # NEW: The C++ Ceiling fix (ny < 0)
+    P.append('int hx=bot.hx(),hy=bot.hy();auto is_fatal=[&](int d){int nx=hx+DX[d],ny=hy+DY[d];if(nx<0||nx>=W||ny<0||ny>=H||wG[ny*W+nx])return true;for(int b=0;b<nB;b++)for(int j=0;j<bt[b].ln;j++)if(bt[b].bx[j]==nx&&bt[b].by[j]==ny)return true;return false;};\n')
+    
     P.append('int best=-1;float bS=-1e9;for(int d=0;d<4;d++){if(d==bd||is_fatal(d))continue;if(best==-1||lg[d]>bS){bS=lg[d];best=d;}}if(best==-1){bS=-1e9;for(int d=0;d<4;d++){if(d==bd)continue;if(best==-1||lg[d]>bS){bS=lg[d];best=d;}}}if(best==-1)best=0;\n')
     P.append('if(!fr)cout<<\';\';cout<<bot.id<<\' \'<<DN[best];fr=false;}\n')
     P.append('if(nm==0)cout<<"WAIT";cout<<endl;}}\n')

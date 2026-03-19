@@ -20,6 +20,8 @@ import numpy as np
 import torch
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 # Ensure imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -133,7 +135,7 @@ class SelfPlayCallback(BaseCallback):
         """Update the opponent policy in training environments."""
         # Load the latest checkpoint as the opponent
         ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
-        opponent_model = MaskablePPO.load(str(ckpt_path))
+        opponent_model = MaskablePPO.load(str(ckpt_path), device="cpu")
 
         def make_opponent(obs, masks):
             action, _ = opponent_model.predict(obs, deterministic=True, action_masks=masks)
