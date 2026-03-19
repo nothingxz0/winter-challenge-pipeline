@@ -423,14 +423,30 @@ class SnakeBotEnv(gymnasium.Env):
         return acts
 
     def _random_actions(self, player=1):
-        """Random actions for a player's birds."""
+        """Random actions for a player's birds, safely handling 5+ bird map anomalies."""
         bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
         alive_birds = self.get_alive_bird_ids(player=player)
         acts = []
-        for bid in bird_ids:
-            if bid not in alive_birds:
-                continue
-            acts.extend([bid, random.randint(0, 3)])
+        masks = self.action_masks(player=player) # Get the masks!
+        
+        for i, bid in enumerate(bird_ids):
+            if bid not in alive_birds: continue
+            
+            # --- THE FIX: Cap the mask lookup at 4 birds ---
+            if i < 4:
+                start_idx = i * 4
+                # Pick from actual safe moves
+                safe_moves = [m for m in range(4) if masks[start_idx + m]]
+                if safe_moves:
+                    chosen_move = random.choice(safe_moves)
+                else:
+                    chosen_move = random.randint(0, 3) # Fallback if trapped
+            else:
+                # If the map glitched and gave us a 5th+ bird, just move randomly 
+                # (since it doesn't fit in our 16-slot mask anyway)
+                chosen_move = random.randint(0, 3)
+                
+            acts.extend([bid, chosen_move])
         return acts
 
     def _compute_reward(self, terminal):
@@ -442,14 +458,8 @@ class SnakeBotEnv(gymnasium.Env):
         opp_score = self.lib.engine_body_score(self.handle, 1)
 
         # You only get +1 if you ACTUALLY ate more apples than the opponent.
-        if my_score > opp_score:
-            if self.strict_win:
-                if my_score > self.starting_score:
-                    return 1.0
-                else:
-                    return 0.0
-            else:
-                return 1.0
+        if my_score > opp_score and my_score > self.starting_score:
+            return 1.0
         if my_score < opp_score:
             return -1.0
 
@@ -490,6 +500,30 @@ class SnakeBotEnv(gymnasium.Env):
         W = self.lib.engine_get_width(self.handle)
         H = self.lib.engine_get_height(self.handle)
 
+        # === NEW CODE: GATHER ALL OCCUPIED BODY COORDINATES ===
+        occupied_coords = set()
+        total_birds = self.lib.engine_bird_count(self.handle)
+        
+        for j in range(total_birds):
+            b_id = ctypes.c_int()
+            b_own = ctypes.c_int()
+            b_alive = ctypes.c_int()
+            b_len = ctypes.c_int()
+            b_body = (ctypes.c_int * 400)()
+            
+            self.lib.engine_get_bird(
+                self.handle, j, 
+                ctypes.byref(b_id), ctypes.byref(b_own), ctypes.byref(b_alive),
+                b_body, ctypes.byref(b_len)
+            )
+            
+            if b_alive.value == 1:
+                # Add every single body segment to our obstacle list
+                for k in range(b_len.value):
+                    ox, oy = b_body[k * 2], b_body[k * 2 + 1]
+                    occupied_coords.add((ox, oy))
+        # ======================================================
+
         for i, bid in enumerate(bird_ids):
             if i < 4:
                 start_idx = i * 4
@@ -522,8 +556,12 @@ class SnakeBotEnv(gymnasium.Env):
                     # 3. Check Static Walls
                     if self.lib.engine_is_wall(self.handle, nx, ny) == 1:
                         continue
+                        
+                    # 4. Check Bird Bodies
+                    if (nx, ny) in occupied_coords:
+                        continue
 
-                    # If it passes both checks, it is genuinely a safe move!
+                    # If it passes all checks, it is genuinely a safe move!
                     safe_moves.append(move)
 
                 # Apply the verified safe moves to the mask
