@@ -473,24 +473,59 @@ class SnakeBotEnv(gymnasium.Env):
         
         alive_birds = self.get_alive_bird_ids(player=player)
         bird_ids = self._my_bird_ids if player == 0 else self._opp_bird_ids
+        
+        # We need the current head positions to predict the next step!
+        head_positions = self._get_head_positions(player=player)
+
+        # Get map dimensions to prevent out-of-bounds "UP" spam
+        W = self.lib.engine_get_width(self.handle)
+        H = self.lib.engine_get_height(self.handle)
 
         for i, bid in enumerate(bird_ids):
             if i < 4:
                 start_idx = i * 4
-                if bid not in alive_birds:
+                
+                # If bird is dead, mark all as True (SB3 requires valid masks even for dead agents)
+                if bid not in alive_birds or bid not in head_positions:
                     mask[start_idx : start_idx + 4] = True
                     continue
 
+                hx, hy = head_positions[bid]
                 n_moves = self.lib.engine_legal_moves(self.handle, bid, legal_arr)
                 safe_moves = []
+                
                 for m in range(n_moves):
                     move = legal_arr[m]
-                    if move != 4:  # 4 is KEEP
-                        safe_moves.append(move)
+                    if move == 4:  # KEEP is not part of our 0-3 action space
+                        continue
+                        
+                    # 1. Project where this move takes the snake's head
+                    nx, ny = hx, hy
+                    if move == 0: ny -= 1   # NORTH
+                    elif move == 1: nx += 1 # EAST
+                    elif move == 2: ny += 1 # SOUTH
+                    elif move == 3: nx -= 1 # WEST
+                    
+                    # 2. Check Map Bounds (This stops the UP spam!)
+                    if nx < 0 or nx >= W or ny < 0 or ny >= H:
+                        continue
+                        
+                    # 3. Check Static Walls
+                    if self.lib.engine_is_wall(self.handle, nx, ny) == 1:
+                        continue
 
+                    # If it passes both checks, it is genuinely a safe move!
+                    safe_moves.append(move)
+
+                # Apply the verified safe moves to the mask
                 if safe_moves:
                     for sm in safe_moves:
                         mask[start_idx + sm] = True
                 else:
-                    mask[start_idx] = True
+                    # If the snake is completely trapped, unlock the raw legal moves 
+                    # so the C++ engine can handle the death gracefully without crashing SB3
+                    for m in range(n_moves):
+                        if legal_arr[m] != 4:
+                            mask[start_idx + legal_arr[m]] = True
+                            
         return mask
