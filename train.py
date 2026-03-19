@@ -17,12 +17,13 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
-import torch
-
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+
+import numpy as np
+import torch
+torch.set_num_threads(1)
 
 # Ensure imports work
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -111,17 +112,25 @@ class SelfPlayCallback(BaseCallback):
         wins = 0
         total = self.n_eval_games
 
-        # Create a temporary env for evaluation
-        env = SnakeBotEnv(league=4, max_turns=200)
+        # 1. Load the actual frozen opponent for the test!
+        ckpt_path = Path(self.checkpoint_dir) / f"opponent_v{self.opponent_version}.zip"
+        if ckpt_path.exists():
+            eval_opp_model = MaskablePPO.load(str(ckpt_path), device="cpu")
+            def make_eval_opponent(obs, masks):
+                action, _ = eval_opp_model.predict(obs, deterministic=True, action_masks=masks)
+                return action
+        else:
+            make_eval_opponent = None
+
+        # 2. Pass the opponent into the environment
+        env = SnakeBotEnv(league=4, max_turns=200, opponent=make_eval_opponent)
 
         for game_idx in range(total):
-            # Alternate which player we are
             we_are_p0 = (game_idx % 2 == 0)
             obs, _ = env.reset(seed=10000 + game_idx)
             terminated = False
 
             while not terminated:
-                # Get action masks and pass to model
                 action_masks = env.action_masks()
                 action, _ = self.model.predict(obs, deterministic=True, action_masks=action_masks)
                 obs, reward, terminated, _, _ = env.step(action)
