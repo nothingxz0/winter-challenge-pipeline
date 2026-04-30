@@ -245,9 +245,9 @@ def generate_cpp(data):
     P.append('static void exO(){memset(obs,0,7*64*64*4);\n')
     P.append('for(int y=0;y<H;y++)for(int x=0;x<W;x++)if(wG[y*W+x])obs[y*64+x]=1.0f;\n')
     P.append('for(int i=0;i<nA;i++)if(aX[i]<64&&aY[i]<64)obs[4096+aY[i]*64+aX[i]]=1.0f;\n')
-    P.append('for(int b=0;b<nB;b++){if(!mB[bt[b].id]||bt[b].ln<=0)continue;int hx=bt[b].hx(),hy=bt[b].hy();if(hx<64&&hy<64)obs[8192+hy*64+hx]=1.0f;for(int j=1;j<bt[b].ln;j++){int x=bt[b].bx[j],y=bt[b].by[j];if(x<64&&y<64){float s=1.0f-j*0.1f;if(s<0.1f)s=0.1f;obs[12288+y*64+x]=s;}}}\n')
-    P.append('for(int b=0;b<nB;b++){if(mB[bt[b].id]||bt[b].ln<=0)continue;int hx=bt[b].hx(),hy=bt[b].hy();if(hx<64&&hy<64)obs[16384+hy*64+hx]=1.0f;for(int j=1;j<bt[b].ln;j++){int x=bt[b].bx[j],y=bt[b].by[j];if(x<64&&y<64){float s=1.0f-j*0.1f;if(s<0.1f)s=0.1f;obs[20480+y*64+x]=s;}}}\n')
-    P.append('float hm=max(H-1,1)*1.0f;for(int y=0;y<H;y++)for(int x=0;x<W;x++)if(!wG[y*W+x])obs[24576+y*64+x]=(float)y/hm;}\n')
+    P.append('for(int b=0;b<nB;b++){if(!mB[bt[b].id]||bt[b].ln<=0)continue;int hx=bt[b].hx(),hy=bt[b].hy();if(hx<64&&hy<64)obs[8192+hy*64+hx]=1.0f;for(int j=0;j<bt[b].ln;j++){int x=bt[b].bx[j],y=bt[b].by[j];if(x<64&&y<64){float s=1.0f-j*0.1f;if(s<0.1f)s=0.1f;obs[12288+y*64+x]=s;}}}\n')
+    P.append('for(int b=0;b<nB;b++){if(mB[bt[b].id]||bt[b].ln<=0)continue;int hx=bt[b].hx(),hy=bt[b].hy();if(hx<64&&hy<64)obs[16384+hy*64+hx]=1.0f;for(int j=0;j<bt[b].ln;j++){int x=bt[b].bx[j],y=bt[b].by[j];if(x<64&&y<64){float s=1.0f-j*0.1f;if(s<0.1f)s=0.1f;obs[20480+y*64+x]=s;}}}\n')
+    P.append('float hm=max(H-1,1)*1.0f;for(int y=0;y<H;y++)for(int x=0;x<W;x++)obs[24576+y*64+x]=(float)y/hm;}\n')
 
     # ---- Main ----
     P.append('int main(){ios_base::sync_with_stdio(false);cin.tie(nullptr);decW();\n')
