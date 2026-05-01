@@ -84,9 +84,22 @@ class SelfPlayCallback(BaseCallback):
                   f"win_rate={win_rate:.1%} vs opponent v{self.opponent_version}")
 
         should_update = False
+        reason = ""
         if win_rate >= self.update_threshold:
             should_update = True
             reason = f"win_rate {win_rate:.1%} >= {self.update_threshold:.1%}"
+            self.patience_count = 0
+        elif win_rate < self.patience_threshold:
+            self.patience_count += 1
+            if self.patience_count >= self.patience_evals:
+                should_update = True
+                reason = (
+                    f"patience ({self.patience_count} consecutive evals "
+                    f"below {self.patience_threshold:.1%})"
+                )
+                self.patience_count = 0
+        else:
+            self.patience_count = 0
 
         if should_update:
             self.opponent_version += 1

@@ -86,7 +86,13 @@ def test_reward_values():
         obs, _ = env.reset(seed=seed)
         terminated = False
         while not terminated:
-            action = env.action_space.sample()
+            # Use action masks so P0 takes safe moves, matching the same
+            # constraint applied to P1 (which uses _random_actions with masks).
+            masks = env.action_masks()
+            action = np.array([
+                np.random.choice([d for d in range(4) if masks[i * 4 + d]] or list(range(4)))
+                for i in range(4)
+            ])
             obs, reward, terminated, truncated, info = env.step(action)
         results.append(reward)
 
@@ -143,7 +149,7 @@ def test_opponent_callback():
     """Test that opponent callback is called correctly."""
     call_count = [0]
 
-    def dummy_opponent(obs):
+    def dummy_opponent(obs, masks):
         call_count[0] += 1
         assert obs.shape == (7, 64, 64)
         return np.array([0, 0, 0, 0])  # All NORTH
